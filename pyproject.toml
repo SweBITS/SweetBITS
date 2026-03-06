@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sweetbits"
+version = "0.1.0"
+description = "Bioinformatics CLI tools for SweBITS"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "polars>=1.38.1",
+    "click>=8.3.1",
+    "numpy>=2.4.2",
+    "joltax>=0.2.0",
+    "pyarrow",
+]
+
+[project.scripts]
+sweetbits = "sweetbits.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sweetbits"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-cov",
+    "black",
+    "isort",
+    "mypy",
+]

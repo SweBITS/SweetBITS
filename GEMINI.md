@@ -148,6 +148,7 @@ Generates Krona plots from abundance tables. Needs further discussion.
 
 ### Input Data Strict Assumptions
 - Paired-end data of max 2x150bp.
+- K-mer size (k) must be at least 35 (ensures k-mer counts fit in UInt8).
 - 8-column Kraken report files.
 - 6-column Kraken read-by-read files (custom fork containing MHG).
 
