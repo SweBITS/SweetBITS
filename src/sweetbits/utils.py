@@ -19,7 +19,8 @@ def parse_sample_id(sample_id: str) -> Dict[str, Any]:
     Raises:
         ValueError: If the sample_id format is invalid.
     """
-    pattern = r"^(Ki|Lj)-(\d{4})_(\d{1,2})_(.+)$"
+    # Support both Ki-YYYY and Ki_YYYY, and 1-2 digit weeks
+    pattern = r"^(Ki|Lj)[-_](\d{4})_(\d{1,2})_(.+)$"
     match = re.match(pattern, sample_id)
     
     if not match:

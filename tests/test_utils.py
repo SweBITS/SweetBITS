@@ -26,3 +26,11 @@ def test_parse_sample_id_invalid():
 def test_parse_sample_id_missing_parts():
     with pytest.raises(ValueError):
         parse_sample_id("Ki-1974_02")
+
+def test_parse_sample_id_underscores_non_padded():
+    sample_id = "Lj_2013_2_141"
+    result = parse_sample_id(sample_id)
+    assert result["site"] == "Ljungbyhed"
+    assert result["year"] == 2013
+    assert result["week"] == 2
+    assert result["suffix"] == "141"
