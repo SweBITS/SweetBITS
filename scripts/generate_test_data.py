@@ -5,7 +5,7 @@ def main():
     test_data_dir = Path("test_data")
     test_data_dir.mkdir(exist_ok=True)
     
-    sample_id = "Lj-2022_20_S001"
+    sample_id = "Lj-2022_20_001"
     
     print(f"Generating mock Kraken Parquet for {sample_id}...")
     generate_mock_kraken_parquet(
@@ -16,7 +16,7 @@ def main():
     
     print("Generating mock Report Parquet...")
     generate_mock_report_parquet(
-        sample_ids=[sample_id, "Lj-2022_21_S002"],
+        sample_ids=[sample_id, "Lj-2022_20_002"],
         output_path=test_data_dir / "merged_reports.parquet"
     )
     
