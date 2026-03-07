@@ -1,3 +1,8 @@
+"""
+sweetbits.tables
+Logic for generating abundance matrices and calculating canonical remainders.
+"""
+
 import polars as pl
 import logging
 import numpy as np
@@ -22,22 +27,44 @@ def generate_table_logic(
     keep_unclassified: bool = False
 ) -> Dict[str, Any]:
     """
-    Generates an abundance table from a merged REPORT_PARQUET file.
-    Returns a summary dictionary of the operation.
+    Generates a wide-format abundance table from a merged REPORT_PARQUET file.
+
+    This function handles three primary abundance modes:
+    - 'taxon': Raw reads assigned directly to a TaxID.
+    - 'clade': Cumulative reads for a taxon and all descendants (redundant).
+    - 'canonical': Canonical remainders (eliminates double-counting).
+
+    Args:
+        input_parquet: Path to the merged REPORT_PARQUET file.
+        output_file: Path where the table will be saved (.csv, .tsv, or .parquet).
+        mode: Abundance calculation mode ('taxon', 'clade', 'canonical').
+        taxonomy_dir: Path to JolTax cache directory (required for 'canonical' or clade filter).
+        exclude_samples: Optional path to a text file containing Sample IDs to exclude.
+        min_observed: Minimum number of samples a taxon must appear in.
+        min_reads: Minimum maximum read count across all samples for a taxon.
+        clade_filter: Optional TaxID to restrict output to a specific clade.
+        keep_unclassified: Whether to include TaxID 0 in the output.
+
+    Returns:
+        A summary dictionary containing 'active_samples', 'rows_output', 
+        'output_file', and 'status'.
+
+    Raises:
+        ValueError: If required parameters (like taxonomy_dir) are missing for the selected mode.
     """
-    # 1. Load Data
-    df = pl.read_parquet(input_parquet)
+    # 1. Initialize LazyFrame
+    lf = pl.scan_parquet(input_parquet)
     
-    # 2. Filtering Samples
+    # 2. Filtering Samples (Lazy)
     if exclude_samples:
         with open(exclude_samples, "r") as f:
             excluded_ids = [line.strip() for line in f if line.strip()]
-        df = df.filter(~pl.col("sample_id").is_in(excluded_ids))
+        lf = lf.filter(~pl.col("sample_id").is_in(excluded_ids))
         
-    active_samples_list = df["sample_id"].unique().to_list()
-    active_samples = len(active_samples_list)
+    # Get active sample count without loading full data
+    active_samples = lf.select("sample_id").unique().collect().height
     
-    # Warning for high min_observed
+    # Issue warning if filtering threshold is very high relative to sample count
     if min_observed > (active_samples / 2) and active_samples > 0:
         import click
         click.secho(
@@ -46,31 +73,34 @@ def generate_table_logic(
             fg="yellow", err=True
         )
 
-    # 3. Mode Handling & Clade Filtering (Requires JolTax)
+    # 3. Load Taxonomy Tree if needed
     tree = None
     if mode in ["clade", "canonical"] or clade_filter is not None:
         if not taxonomy_dir:
             raise ValueError(f"Taxonomy directory is required for mode '{mode}' or clade filtering.")
         tree = JolTree.load(str(taxonomy_dir))
         
-    # 3a. Clade Filter
+    # 3a. Apply Taxonomic Clade Filter (Lazy)
     if clade_filter is not None:
         clade_taxids = tree.get_clade(clade_filter)
-        df = df.filter(pl.col("t_id").is_in(clade_taxids))
+        lf = lf.filter(pl.col("t_id").is_in(clade_taxids))
         
-    # 3b. Unclassified Handling (TaxID 0)
+    # 3b. Initial Unclassified Handling (re-evaluated in canonical mode)
     if not keep_unclassified and mode != "canonical":
-        df = df.filter(pl.col("t_id") != 0)
+        lf = lf.filter(pl.col("t_id") != 0)
         
     # 4. Aggregation based on Mode
     if mode == "taxon":
-        pivot_df = df.select(["t_id", "sample_id", "year", "week", "taxon_reads"])
+        pivot_df = lf.select(["t_id", "sample_id", "year", "week", "taxon_reads"]).collect()
         pivot_col = "taxon_reads"
     elif mode == "clade":
-        pivot_df = df.select(["t_id", "sample_id", "year", "week", "clade_reads"])
+        pivot_df = lf.select(["t_id", "sample_id", "year", "week", "clade_reads"]).collect()
         pivot_col = "clade_reads"
     elif mode == "canonical":
         # --- CANONICAL REMAINDER LOGIC ---
+        # We must collect here because NCA math requires global coordination
+        df = lf.select(["t_id", "sample_id", "year", "week", "clade_reads"]).collect()
+        
         num_nodes = len(tree._index_to_id)
         
         # 4.1 Build NCA Target Map
@@ -93,7 +123,6 @@ def generate_table_logic(
                 depths[mask] = anc_depths[mask]
                 target_map[mask] = map_arr[mask]
         
-        # Nodes without canonical ancestors map to root (index 0)
         target_map[target_map == -1] = 0
         
         # 4.2 Identify Active Canonical Nodes
@@ -153,40 +182,24 @@ def generate_table_logic(
             
         # 4.5 Convert back to long-format
         rem_tids = tree._index_to_id[active_canonical_indices]
-        
-        tid_col = []
-        sample_col = []
-        val_col = []
+        tid_col, sample_col, val_col = [], [], []
         
         for i, tid in enumerate(rem_tids):
             for j, sid in enumerate(sample_names):
-                val = remainders[i, j]
                 tid_col.append(tid)
                 sample_col.append(sid)
-                val_col.append(val)
+                val_col.append(remainders[i, j])
         
-        # Handle Unclassified (TaxID 0) separately if root was not 1
-        # or if we explicitly want it and it wasn't in input.
         if keep_unclassified and clade_filter is None:
-            # Check if 0 is already in rem_tids
             if 0 not in rem_tids:
-                # Add a row for TID 0 for each sample
                 for sid in sample_names:
-                    # Get actual unclassified count from input if present
                     unclass_val = 0
                     row = df.filter((pl.col("t_id") == 0) & (pl.col("sample_id") == sid))
-                    if not row.is_empty():
-                        unclass_val = row["clade_reads"].sum()
-                    
-                    tid_col.append(0)
-                    sample_col.append(sid)
-                    val_col.append(unclass_val)
+                    if not row.is_empty(): unclass_val = row["clade_reads"].sum()
+                    tid_col.append(0); sample_col.append(sid); val_col.append(unclass_val)
 
-        pivot_df = pl.DataFrame({
-            "t_id": tid_col,
-            "sample_id": sample_col,
-            "val": val_col
-        }).with_columns(pl.col("t_id").cast(pl.UInt32))
+        pivot_df = pl.DataFrame({"t_id": tid_col, "sample_id": sample_col, "val": val_col})
+        pivot_df = pivot_df.with_columns(pl.col("t_id").cast(pl.UInt32))
         
         if not keep_unclassified:
             pivot_df = pivot_df.filter(pl.col("t_id") != 0)
@@ -195,7 +208,7 @@ def generate_table_logic(
         pivot_df = pivot_df.join(sample_meta, on="sample_id")
         pivot_col = "val"
 
-    # 5. Pivot to wide format
+    # 5. Pivot to wide format (Columns: YYYY_WW)
     pivot_df = pivot_df.with_columns(
         (pl.col("year").cast(pl.String) + "_" + pl.col("week").cast(pl.String).str.pad_start(2, "0")).alias("period")
     )
@@ -207,7 +220,7 @@ def generate_table_logic(
         aggregate_function="sum"
     ).fill_null(0).sort("t_id")
     
-    # 6. Apply Filters
+    # 6. Apply Occupancy and Depth Filters
     sample_cols = [c for c in table.columns if c != "t_id"]
     if not sample_cols:
         table = pl.DataFrame(schema={"t_id": pl.UInt32})
@@ -223,7 +236,7 @@ def generate_table_logic(
             ])["max_val"]
             table = table.filter(max_reads >= min_reads)
         
-    # 7. Output
+    # 7. Output Generation
     ext = output_file.suffix.lower()
     if ext == ".parquet":
         metadata = get_standard_metadata("RAW_TABLE", source_path=input_parquet, sorting="t_id")
