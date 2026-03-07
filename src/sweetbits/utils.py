@@ -4,7 +4,8 @@ Utility functions for parsing and validating SweBITS data structures.
 """
 
 import re
-from typing import Dict, Any
+from pathlib import Path
+from typing import Dict, Any, List
 
 def parse_sample_id(sample_id: str) -> Dict[str, Any]:
     """
@@ -34,15 +35,6 @@ def parse_sample_id(sample_id: str) -> Dict[str, Any]:
     Raises:
         ValueError: If the sample_id format is invalid or week is out of range.
     """
-    # Regex breakdown:
-    # ^(Ki|Lj)      : Starts with Ki or Lj
-    # [-_]          : Followed by a hyphen or underscore
-    # (\d{4})       : Exactly 4 digits for the year
-    # [-_]          : Followed by a hyphen or underscore (Generalizing separator)
-    # (\d{1,2})     : 1 or 2 digits for the week
-    # [-_]          : Followed by a hyphen or underscore
-    # (\d{1,3})     : 1 to 3 digits for the filter/replicate suffix
-    # $             : End of string
     pattern = r"^(Ki|Lj)[-_](\d{4})[-_](\d{1,2})[-_](\d{1,3})$"
     match = re.match(pattern, sample_id)
     
@@ -57,7 +49,6 @@ def parse_sample_id(sample_id: str) -> Dict[str, Any]:
     year = int(year_str)
     week = int(week_str)
     
-    # Basic ISO week validation
     if not (1 <= week <= 53):
         raise ValueError(f"Invalid ISO week in sample ID: {week}. Must be between 1 and 53.")
     
@@ -73,3 +64,34 @@ def parse_sample_id(sample_id: str) -> Dict[str, Any]:
         "suffix": suffix,
         "sample_id": sample_id
     }
+
+def load_sample_id_list(file_path: Path) -> List[str]:
+    """
+    Reads a list of Sample IDs from a text file (one ID per line).
+    
+    Handles:
+    - Whitespace stripping.
+    - Skipping empty lines.
+    - Skipping comment lines (starting with #).
+    - Basic validation (ensures IDs are strings).
+
+    Args:
+        file_path: Path to the text file.
+
+    Returns:
+        A list of unique Sample ID strings.
+    """
+    ids = []
+    if not file_path.exists():
+        raise FileNotFoundError(f"Sample ID list file not found: {file_path}")
+        
+    with open(file_path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            ids.append(line)
+            
+    # Remove duplicates but preserve order
+    seen = set()
+    return [x for x in ids if not (x in seen or seen.add(x))]

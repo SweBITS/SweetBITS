@@ -6,11 +6,12 @@ Logic for generating abundance matrices and calculating canonical remainders.
 import polars as pl
 import logging
 import numpy as np
+import click
 from pathlib import Path
 from typing import Optional, List, Union, Dict, Any
 from joltax import JolTree
 from joltax.constants import CANONICAL_RANKS
-from sweetbits.utils import parse_sample_id
+from sweetbits.utils import parse_sample_id, load_sample_id_list
 from sweetbits.metadata import get_standard_metadata, write_parquet_with_metadata
 
 logger = logging.getLogger(__name__)
@@ -57,10 +58,21 @@ def generate_table_logic(
     # 1. Initialize LazyFrame
     lf = pl.scan_parquet(input_parquet)
     
-    # 2. Filtering Samples (Lazy)
+    # 2. Filtering Samples
     if exclude_samples:
-        with open(exclude_samples, "r") as f:
-            excluded_ids = [line.strip() for line in f if line.strip()]
+        excluded_ids = load_sample_id_list(exclude_samples)
+        
+        # Check if excluded IDs actually exist in the dataset
+        all_ids = set(lf.select("sample_id").unique().collect()["sample_id"].to_list())
+        phantom_ids = [eid for eid in excluded_ids if eid not in all_ids]
+        
+        if phantom_ids:
+            click.secho(
+                f"Warning: {len(phantom_ids)} sample IDs in exclusion file were not found in the dataset "
+                f"(e.g., {phantom_ids[0]}). Please check for typos.",
+                fg="yellow", err=True
+            )
+            
         lf = lf.filter(~pl.col("sample_id").is_in(excluded_ids))
         
     # Get active sample count without loading full data
@@ -68,7 +80,6 @@ def generate_table_logic(
     
     # Issue warning if filtering threshold is very high relative to sample count
     if min_observed > (active_samples / 2) and active_samples > 0:
-        import click
         click.secho(
             f"Warning: --min-observed ({min_observed}) is more than 50% of active samples ({active_samples}). "
             "This may result in an empty or very sparse table.", 
@@ -100,7 +111,6 @@ def generate_table_logic(
         pivot_col = "clade_reads"
     elif mode == "canonical":
         # --- CANONICAL REMAINDER LOGIC ---
-        # We must collect here because NCA math requires global coordination
         df = lf.select(["t_id", "sample_id", "year", "week", "clade_reads"]).collect()
         
         num_nodes = len(tree._index_to_id)
@@ -182,7 +192,7 @@ def generate_table_logic(
             
             remainders[:, j] = sample_clade_counts - child_sums
             
-        # 4.5 Convert back to long-format
+        # 4.5 Convert back to long-format for pivoting
         rem_tids = tree._index_to_id[active_canonical_indices]
         tid_col, sample_col, val_col = [], [], []
         
@@ -206,6 +216,7 @@ def generate_table_logic(
         if not keep_unclassified:
             pivot_df = pivot_df.filter(pl.col("t_id") != 0)
         
+        # Re-attach sample metadata
         sample_meta = df.select(["sample_id", "year", "week"]).unique()
         pivot_df = pivot_df.join(sample_meta, on="sample_id")
         pivot_col = "val"

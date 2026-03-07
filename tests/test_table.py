@@ -64,13 +64,18 @@ def test_table_clade_filter(mock_data, tmp_path):
     assert all(tid in [5000000, 5000001, 5000002] for tid in df["t_id"])
     assert 9606 not in df["t_id"].to_list()
 
-def test_table_exclude_samples(mock_data, tmp_path):
-    exclude_file = tmp_path / "exclude.txt"
+def test_table_exclude_samples_with_phantom(mock_data, tmp_path):
+    # This file has one real ID and one fake ID
+    exclude_file = tmp_path / "exclude_mixed.txt"
     with open(exclude_file, "w") as f:
-        f.write("Lj-2022_20_001\n")
+        f.write(f"{mock_data['samples'][0]}\n") # Real
+        f.write("Ki-1999_01_001\n")             # Phantom (fake)
+        f.write("# comment line\n")
+        f.write("  \n") # Empty line
         
-    output_csv = tmp_path / "filtered_table.csv"
-    # Explicitly use mode='taxon' to avoid taxonomy requirement for these simple tests
+    output_csv = tmp_path / "filtered_phantom.csv"
+    
+    # We expect a warning to be printed to stderr, but the logic should still pass
     generate_table_logic(
         input_parquet=mock_data["parquet"],
         output_file=output_csv,
@@ -80,6 +85,9 @@ def test_table_exclude_samples(mock_data, tmp_path):
         min_reads=1
     )
     
+    df = pl.read_csv(output_csv)
+    # The real ID should be excluded, leaving only the other sample from mock_data
+    # (In our mock setup, we have 2 samples)
     assert output_csv.exists()
 
 def test_table_min_observed(mock_data, tmp_path):
