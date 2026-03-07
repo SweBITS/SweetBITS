@@ -16,6 +16,137 @@ from sweetbits.metadata import get_standard_metadata, write_parquet_with_metadat
 
 logger = logging.getLogger(__name__)
 
+def calculate_canonical_remainders(
+    df: pl.DataFrame,
+    tree: JolTree,
+    keep_unclassified: bool = False,
+    clade_filter: Optional[int] = None
+) -> pl.DataFrame:
+    """
+    Calculates taxonomic remainders by pushing counts up to the nearest canonical ancestor.
+
+    This implements the NCA (Nearest Canonical Ancestor) aggregation algorithm.
+    It solves the 'double-counting' problem by ensuring reads are attributed 
+    only to the most specific standard rank available.
+
+    Args:
+        df                : Long-format DataFrame with 't_id', 'sample_id', and 'clade_reads'.
+        tree              : The loaded JolTree taxonomy cache.
+        keep_unclassified : Whether to explicitly include/calculate TaxID 0.
+        clade_filter      : Optional TaxID used to define the root of the calculation.
+
+    Returns:
+        A long-format DataFrame with columns ['t_id', 'sample_id', 'val'].
+    """
+    # 1. RESOLVE GLOBAL CONTEXT
+    # Internal indices are JolTax's zero-based memory offsets.
+    # Root is typically TaxID 1 (Internal Index 0).
+    global_root_idx = 0 
+    calc_root_idx = tree._get_indices(np.array([clade_filter]))[0] if clade_filter else global_root_idx
+    
+    # 2. BUILD THE ACTIVE NCA MAP
+    # Instead of mapping the full taxonomy (~2M nodes), we only map nodes 
+    # present in the input and their ancestors.
+    input_tids = df["t_id"].unique().to_numpy()
+    input_indices = tree._get_indices(input_tids)
+    valid_input_mask = input_indices != -1
+    active_indices = input_indices[valid_input_mask]
+    
+    # We find the target (NCA) for every active node.
+    # A target is the first ancestor belonging to a rank in CANONICAL_RANKS.
+    num_total_nodes = len(tree._index_to_id)
+    target_map = np.full(num_total_nodes, -1, dtype=np.int32)
+    depths = np.full(num_total_nodes, -1, dtype=np.int32)
+    
+    for rank, map_arr in tree.canonical_maps.items():
+        if rank in CANONICAL_RANKS or rank == tree.top_rank:
+            valid_anc = (map_arr != -1)
+            # Find depths of these potential targets
+            anc_depths = np.full(num_total_nodes, -1, dtype=np.int32)
+            anc_depths[valid_anc] = tree.depths[map_arr[valid_anc]]
+            
+            # Update target_map if this canonical ancestor is deeper (nearer)
+            mask = valid_anc & (anc_depths > depths)
+            depths[mask] = anc_depths[mask]
+            target_map[mask] = map_arr[mask]
+            
+    # Nodes without a canonical ancestor default to the root of our calculation
+    target_map[target_map == -1] = calc_root_idx
+    
+    # 3. IDENTIFY ACTIVE CANONICAL NODES
+    # These are the specific nodes that will appear in our final output.
+    ncas_of_input = target_map[active_indices]
+    active_canonical_indices = np.unique(ncas_of_input)
+    
+    # 4. PREPARE AGGREGATION (THE 'VOTING' PATH)
+    # Every active canonical node (except the root) contributes its value to 
+    # be subtracted from its parent's NCA.
+    is_not_root = active_canonical_indices != calc_root_idx
+    active_canonical_subset = active_canonical_indices[is_not_root]
+    
+    # Find the target for each node in the subset (its parent's NCA)
+    parent_indices = tree.parents[active_canonical_subset]
+    contribution_targets = target_map[parent_indices]
+    
+    # Map global tree indices to local positions in our active_canonical array
+    tree_to_active_pos = np.full(num_total_nodes, -1, dtype=np.int32)
+    tree_to_active_pos[active_canonical_indices] = np.arange(len(active_canonical_indices))
+    
+    # Final 'Voting' pairs: source_pos -> target_pos
+    agg_targets = tree_to_active_pos[contribution_targets]
+    agg_sources = np.where(is_not_root)[0]
+    
+    # Optimization: Filter out pairs that don't aggregate into an active node
+    valid_agg = agg_targets != -1
+    agg_targets, agg_sources = agg_targets[valid_agg], agg_sources[valid_agg]
+    
+    # 5. MATRIX MATH (SAMPLE-BY-SAMPLE)
+    # Pivot to a matrix temporarily for vectorized subtraction.
+    matrix_df = df.pivot(values="clade_reads", index="t_id", on="sample_id", aggregate_function="sum").fill_null(0)
+    sample_names = [c for c in matrix_df.columns if c != "t_id"]
+    counts_matrix = matrix_df[sample_names].to_numpy()
+    
+    # Map the pivoted matrix back to our active_canonical array
+    matrix_indices = tree._get_indices(matrix_df["t_id"].to_numpy())
+    idx_to_matrix_pos = np.full(num_total_nodes, -1, dtype=np.int32)
+    valid_matrix = matrix_indices != -1
+    idx_to_matrix_pos[matrix_indices[valid_matrix]] = np.arange(np.sum(valid_matrix))
+    
+    active_in_input_pos = idx_to_matrix_pos[active_canonical_indices]
+    found_in_input_mask = active_in_input_pos != -1
+    
+    # Result storage
+    remainders = np.zeros((len(active_canonical_indices), len(sample_names)), dtype=np.int64)
+    
+    for j in range(len(sample_names)):
+        # Get clade counts for our canonical nodes
+        sample_clade_counts = np.zeros(len(active_canonical_indices), dtype=np.int64)
+        sample_clade_counts[found_in_input_mask] = counts_matrix[active_in_input_pos[found_in_input_mask], j]
+        
+        # Aggregate children sums using np.add.at (Group By + Sum)
+        child_sums = np.zeros(len(active_canonical_indices), dtype=np.int64)
+        np.add.at(child_sums, agg_targets, sample_clade_counts[agg_sources])
+        
+        # Core Formula: Remainder = Total Clade - Sum of Canonical Child Clades
+        remainders[:, j] = sample_clade_counts - child_sums
+        
+    # 6. HIGH-PERFORMANCE RECONSTRUCTION (MELT)
+    # Instead of Python loops, we create a Polars wide DataFrame and unpivot it.
+    rem_tids = tree._index_to_id[active_canonical_indices]
+    
+    result_wide = pl.from_numpy(remainders, schema=sample_names).with_columns(t_id = pl.Series(rem_tids).cast(pl.UInt32))
+    result = result_wide.unpivot(index="t_id", variable_name="sample_id", value_name="val")
+    
+    # 7. UNCLASSIFIED HANDLING
+    if keep_unclassified and clade_filter is None and 0 not in rem_tids:
+        unclass_lf = df.filter(pl.col("t_id") == 0).group_by(["sample_id", "t_id"]).agg(pl.col("clade_reads").sum().alias("val"))
+        result = pl.concat([result, unclass_lf.select(["t_id", "sample_id", "val"])])
+
+    if not keep_unclassified:
+        result = result.filter(pl.col("t_id") != 0)
+        
+    return result
+
 def generate_table_logic(
     input_parquet: Path,
     output_file: Path,
@@ -118,91 +249,19 @@ def generate_table_logic(
     elif mode == "canonical":
         # NCA math always requires clade_reads
         target_cols.append("clade_reads")
-        df = lf.select(target_cols).collect()
+        input_df = lf.select(target_cols).collect()
         
-        num_nodes = len(tree._index_to_id)
+        # Calculate remainders via optimized NCA logic
+        pivot_df = calculate_canonical_remainders(
+            input_df, 
+            tree, 
+            keep_unclassified=keep_unclassified,
+            clade_filter=clade_filter
+        )
         
-        # Build Target Map
-        target_map = np.full(num_nodes, -1, dtype=np.int32)
-        depths = np.full(num_nodes, -1, dtype=np.int32)
-        relevant_ranks = set(CANONICAL_RANKS)
-        if tree.top_rank == "domain":
-            relevant_ranks.add("domain"); relevant_ranks.discard("superkingdom")
-        else:
-            relevant_ranks.add("superkingdom"); relevant_ranks.discard("domain")
-
-        for rank, map_arr in tree.canonical_maps.items():
-            if rank in relevant_ranks:
-                valid_anc = (map_arr != -1)
-                anc_depths = np.full(num_nodes, -1, dtype=np.int32)
-                anc_depths[valid_anc] = tree.depths[map_arr[valid_anc]]
-                mask = valid_anc & (anc_depths > depths)
-                depths[mask] = anc_depths[mask]; target_map[mask] = map_arr[mask]
-        
-        target_map[target_map == -1] = 0
-        
-        # Identify Active Set
-        input_tids = df["t_id"].unique().to_numpy()
-        input_indices = tree._get_indices(input_tids)
-        valid_input_mask = input_indices != -1
-        ncas_of_input = target_map[input_indices[valid_input_mask]]
-        active_canonical_indices = np.unique(ncas_of_input)
-        
-        # Preparation for aggregation
-        root_idx = 0 
-        not_root_mask = active_canonical_indices != root_idx
-        parent_indices = tree.parents[active_canonical_indices[not_root_mask]]
-        contribution_targets = target_map[parent_indices]
-        
-        tree_to_active = np.full(num_nodes, -1, dtype=np.int32)
-        tree_to_active[active_canonical_indices] = np.arange(len(active_canonical_indices))
-        agg_targets = tree_to_active[contribution_targets]
-        agg_sources = np.where(not_root_mask)[0]
-        
-        valid_agg_mask = agg_targets != -1
-        agg_targets = agg_targets[valid_agg_mask]
-        agg_sources = agg_sources[valid_agg_mask]
-        
-        # Calculation
-        matrix_df = df.pivot(values="clade_reads", index="t_id", on="sample_id", aggregate_function="sum").fill_null(0)
-        sample_names = [c for c in matrix_df.columns if c != "t_id"]
-        counts_matrix = matrix_df[sample_names].to_numpy()
-        matrix_indices = tree._get_indices(matrix_df["t_id"].to_numpy())
-        
-        idx_to_matrix_pos = np.full(num_nodes, -1, dtype=np.int32)
-        idx_to_matrix_pos[matrix_indices[matrix_indices != -1]] = np.arange(np.sum(matrix_indices != -1))
-        active_in_input_pos = idx_to_matrix_pos[active_canonical_indices]
-        found_mask = active_in_input_pos != -1
-        
-        remainders = np.zeros((len(active_canonical_indices), len(sample_names)), dtype=np.int64)
-        for j in range(len(sample_names)):
-            sample_clade_counts = np.zeros(len(active_canonical_indices), dtype=np.int64)
-            sample_clade_counts[found_mask] = counts_matrix[active_in_input_pos[found_mask], j]
-            child_sums = np.zeros(len(active_canonical_indices), dtype=np.int64)
-            np.add.at(child_sums, agg_targets, sample_clade_counts[agg_sources])
-            remainders[:, j] = sample_clade_counts - child_sums
-            
-        # Reconstruction
-        rem_tids = tree._index_to_id[active_canonical_indices]
-        tid_col, sample_col, val_col = [], [], []
-        for i, tid in enumerate(rem_tids):
-            for j, sid in enumerate(sample_names):
-                tid_col.append(tid); sample_col.append(sid); val_col.append(remainders[i, j])
-        
-        if keep_unclassified and clade_filter is None and 0 not in rem_tids:
-            for sid in sample_names:
-                row = df.filter((pl.col("t_id") == 0) & (pl.col("sample_id") == sid))
-                tid_col.append(0); sample_col.append(sid); val_col.append(row["clade_reads"].sum() if not row.is_empty() else 0)
-
-        pivot_df = pl.DataFrame({"t_id": tid_col, "sample_id": sample_col, "val": val_col})
-        pivot_df = pivot_df.with_columns(pl.col("t_id").cast(pl.UInt32))
-        
-        if not keep_unclassified:
-            pivot_df = pivot_df.filter(pl.col("t_id") != 0)
-        
-        # Re-attach temporal columns if SWEBITS
+        # Re-attach temporal columns if SWEBITS standard
         if data_standard == "SWEBITS":
-            sample_meta = df.select(["sample_id", "year", "week"]).unique()
+            sample_meta = input_df.select(["sample_id", "year", "week"]).unique()
             pivot_df = pivot_df.join(sample_meta, on="sample_id")
         pivot_col = "val"
 
@@ -232,7 +291,7 @@ def generate_table_logic(
             max_reads = table.select([pl.max_horizontal(sample_cols).alias("max_val")])["max_val"]
             table = table.filter(max_reads >= min_reads)
         
-    # 7. Output
+    # 7. Output Generation
     ext = output_file.suffix.lower()
     if ext == ".parquet":
         meta = get_standard_metadata("RAW_TABLE", source_path=input_parquet, sorting="t_id", data_standard=data_standard)
