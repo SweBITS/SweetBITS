@@ -84,21 +84,28 @@ def calculate_canonical_remainders(
             
     target_map[(target_map == -1) & in_scope] = calc_root_idx
     
-    # 3. IDENTIFY ACTIVE NODE IDENTIFICATION
-    # Subset the tree to only nodes that actually contain data or are ancestors 
-    # of data in our input. This keeps our processing matrices small and fast.
-    input_tids = df["t_id"].unique().to_numpy()
-    input_indices = tree._get_indices(input_tids)
-    valid_input_mask = (input_indices != -1) & in_scope[input_indices]
+    # 3. DATA PREPARATION & ACTIVE NODE IDENTIFICATION
+    # Pivot the input data into a matrix first. This naturally deduplicates TaxIDs 
+    # and safely aligns all samples into fixed columns for vectorized math.
+    matrix_df = df.pivot(values="clade_reads", index="t_id", on="sample_id", aggregate_function="sum").fill_null(0)
+    sample_names = [c for c in matrix_df.columns if c != "t_id"]
+    num_samples = len(sample_names)
     
-    active_indices = input_indices[valid_input_mask]
-    ncas_of_input = target_map[active_indices]
-    active_canonical_indices = np.unique(ncas_of_input)
+    matrix_tids = matrix_df["t_id"].to_numpy()
+    matrix_indices = tree._get_indices(matrix_tids)
+    
+    # Filter to valid indices strictly within our requested taxonomic scope
+    valid_matrix_mask = (matrix_indices != -1) & (matrix_indices < num_total_nodes) & in_scope[matrix_indices]
+    valid_tree_indices = matrix_indices[valid_matrix_mask]
+    
+    # Identify the specific canonical nodes that will appear in our final output.
+    # We map every valid input node to its Nearest Canonical Ancestor (NCA).
+    active_canonical_indices = np.unique(target_map[valid_tree_indices])
     
     # 4. AGGREGATION SETUP (THE 'VOTING' PATH)
     # Define the subtraction flow: each canonical node votes its entire clade 
-    # value into its parent's NCA bucket. np.arange maps these back to local
-    # positions in our results matrix.
+    # value into its parent's NCA bucket. np.arange maps these tree indices back 
+    # to local, 0-indexed positions in our results matrix.
     is_not_root = active_canonical_indices != calc_root_idx
     active_canonical_subset = active_canonical_indices[is_not_root]
     
@@ -111,30 +118,24 @@ def calculate_canonical_remainders(
     agg_targets = tree_to_active_pos[contribution_targets]
     agg_sources = np.where(is_not_root)[0]
     
+    # Filter out aggregations where the target isn't in our active set
+    # (In well-formed Kraken data, the target ancestor will always be present).
     valid_agg = agg_targets != -1
     agg_targets, agg_sources = agg_targets[valid_agg], agg_sources[valid_agg]
     
-    # 5. DATA PREPARATION (VECTORIZED)
-    # Identify valid input rows and map them to matrix rows. We only pull 
-    # clade_reads for nodes that ARE canonical; non-canonical reads are inferred 
-    # by the parent's remainder.
-    sample_names = sorted(df["sample_id"].unique().to_list())
-    num_samples = len(sample_names)
-    
+    # 5. VECTORIZED MATRIX POPULATION
+    # We only pull clade_reads for nodes that ARE canonical; non-canonical reads 
+    # are inferred dynamically during the subtraction phase from the parent's remainder.
     counts_matrix = np.zeros((len(active_canonical_indices), num_samples), dtype=np.int64)
-    matrix_df = df.pivot(values="clade_reads", index="t_id", on="sample_id", aggregate_function="sum").fill_null(0)
-    matrix_tids = matrix_df["t_id"].to_numpy()
-    matrix_indices = tree._get_indices(matrix_tids)
-    
-    valid_matrix_mask = (matrix_indices != -1) & (matrix_indices < num_total_nodes)
-    valid_tree_indices = matrix_indices[valid_matrix_mask]
     target_positions = tree_to_active_pos[valid_tree_indices]
     
     # Logical safeguard: Row must map to an active position and be an actual canonical node
     active_mask = (target_positions != -1) & (valid_tree_indices == active_canonical_indices[target_positions])
+    
     final_target_positions = target_positions[active_mask]
     source_rows = np.where(valid_matrix_mask)[0][active_mask]
     
+    # Bulk assignment: move all relevant clade_reads into counts_matrix in one step
     raw_counts = matrix_df.drop("t_id").to_numpy()
     counts_matrix[final_target_positions, :] = raw_counts[source_rows, :]
     
@@ -152,8 +153,9 @@ def calculate_canonical_remainders(
     # 7. MASS BALANCE AUDIT
     # The absolute invariant: Sum of taxon_reads in scope must equal the Sum of 
     # standardized remainders. This verifies no reads were lost or gained.
-    tids_in_scope = tree._index_to_id[in_scope]
-    ground_truth = df.filter(pl.col("t_id").is_in(tids_in_scope)).group_by("sample_id").agg(pl.col("taxon_reads").sum().alias("total"))
+    # We filter using only the subset of TaxIDs actually present in the input.
+    in_scope_tids = matrix_tids[valid_matrix_mask]
+    ground_truth = df.filter(pl.col("t_id").is_in(in_scope_tids)).group_by("sample_id").agg(pl.col("taxon_reads").sum().alias("total"))
     
     for j, sid in enumerate(sample_names):
         gt_row = ground_truth.filter(pl.col("sample_id") == sid)
