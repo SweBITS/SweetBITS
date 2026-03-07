@@ -18,13 +18,13 @@ def detect_report_format(file_path: Path) -> str:
     HyperLogLog-based minimizer metrics.
 
     Args:
-        file_path: Path to the Kraken report file.
+        file_path   : Path to the Kraken report file.
 
     Returns:
         'HYPERLOGLOG' for 8-column files, 'LEGACY' for 6-column files.
 
     Raises:
-        ValueError: If the file is empty or contains an unsupported number of columns.
+        ValueError  : If the file is empty or contains an unsupported format.
     """
     with open(file_path, "r") as f:
         first_line = f.readline()
@@ -47,11 +47,11 @@ def parse_kraken_report(file_path: Path, report_format: str) -> pl.DataFrame:
     quality analysis are kept.
 
     Args:
-        file_path: Path to the raw report text file.
-        report_format: Either 'HYPERLOGLOG' or 'LEGACY'.
+        file_path       : Path to the raw report text file.
+        report_format   : Either 'HYPERLOGLOG' or 'LEGACY'.
 
     Returns:
-        A Polars DataFrame containing the extracted taxonomic and read data.
+        A Polars DataFrame containing extracted taxonomic and read counts.
     """
     if report_format == "HYPERLOGLOG":
         schema = {
@@ -90,29 +90,24 @@ def gather_reports_logic(
 
     The process automatically detects two distinct profiles:
     1. Report Format: Differentiates between 'HYPERLOGLOG' (8-col) and 'LEGACY' (6-col).
-       All files in a batch must be consistent.
-    2. Data Standard: Differentiates between 'SWEBITS' (based on filename pattern) 
-       and 'GENERIC'. SweBITS files include extra 'year' and 'week' columns.
-
-    The final Parquet file is sorted for high-performance range queries and contains
-    comprehensive Arrow-level metadata for provenance tracking.
+    2. Data Standard: Differentiates between 'SWEBITS' and 'GENERIC'.
 
     Args:
-        input_dir: Directory to scan for report files.
-        output_file: Path to the output Parquet file.
-        recursive: Whether to search subdirectories. Defaults to True.
-        include_pattern: Glob pattern to match files. Defaults to "*.report".
+        input_dir           : Directory to scan for report files.
+        output_file         : Path to the output Parquet file.
+        recursive           : Whether to search subdirectories. Defaults to True.
+        include_pattern     : Glob pattern to match files. Defaults to "*.report".
 
     Returns:
         A dictionary containing processing statistics:
-        - 'report_format': The detected format (HYPERLOGLOG/LEGACY).
-        - 'data_standard': The detected standard (SWEBITS/GENERIC).
-        - 'files_merged': Count of files processed.
-        - 'total_rows': Total row count in the resulting Parquet.
+        - 'report_format'   : The detected format (HYPERLOGLOG/LEGACY).
+        - 'data_standard'   : The detected standard (SWEBITS/GENERIC).
+        - 'files_merged'    : Count of files processed.
+        - 'total_rows'      : Total row count in the resulting Parquet.
 
     Raises:
-        FileNotFoundError: If no files are found matching the pattern.
-        ValueError: If mixed report formats are detected in the same batch.
+        FileNotFoundError   : If no files are found matching the pattern.
+        ValueError          : If mixed report formats are detected in the same batch.
     """
     search_path = "**/" + include_pattern if recursive else include_pattern
     report_files = list(input_dir.glob(search_path))

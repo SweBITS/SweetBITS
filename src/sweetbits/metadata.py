@@ -23,19 +23,20 @@ def get_standard_metadata(
     Generates the standard metadata dictionary for SweetBITS parquet files.
 
     Args:
-        file_type: String identifier for the file schema.
-        source_path: Absolute path to the original source.
-        compression: Compression description.
-        sorting: Column sorting description.
-        data_standard: 'SWEBITS' or 'GENERIC'.
-        report_format: 'HYPERLOGLOG' (8-col) or 'LEGACY' (6-col).
+        file_type           : String identifier for the file schema (e.g., 'REPORT_PARQUET').
+        source_path         : Absolute path to the original source of the data.
+        compression         : Description of the compression used.
+        sorting             : Description of the column sorting applied.
+        data_standard       : The detected standard profile ('SWEBITS' or 'GENERIC').
+        report_format       : The detected input format ('HYPERLOGLOG' or 'LEGACY').
 
     Returns:
-        A dictionary of metadata strings.
+        A dictionary of metadata strings ready for Arrow schema injection.
     """
     args = sys.argv[1:]
     command_str = " ".join(args)
     
+    # Identify the invocation command
     if not sys.argv[0].endswith("sweetbits"):
         invocation = f"python {sys.argv[0]} {command_str}".strip()
     else:
@@ -55,7 +56,15 @@ def get_standard_metadata(
     return metadata
 
 def write_parquet_with_metadata(df: 'pl.DataFrame', output_path: Path, metadata: Dict[str, str], **kwargs):
-    """Writes a Polars DataFrame to Parquet with custom file-level metadata."""
+    """
+    Writes a Polars DataFrame to Parquet with custom file-level metadata.
+
+    Args:
+        df                  : The Polars DataFrame to save.
+        output_path         : Target path for the Parquet file.
+        metadata            : Dictionary of metadata to inject into the Arrow schema.
+        **kwargs            : Additional arguments passed to pyarrow.parquet.write_table.
+    """
     table = df.to_arrow()
     existing_meta = table.schema.metadata or {}
     merged_meta = {**existing_meta}
@@ -67,7 +76,15 @@ def write_parquet_with_metadata(df: 'pl.DataFrame', output_path: Path, metadata:
     pq.write_table(table, output_path, **kwargs)
 
 def read_parquet_metadata(file_path: Path) -> Dict[str, str]:
-    """Reads the custom metadata from a Parquet file header."""
+    """
+    Reads the custom metadata from a Parquet file header.
+
+    Args:
+        file_path           : Path to the Parquet file.
+
+    Returns:
+        A dictionary of decoded metadata strings.
+    """
     schema = pq.read_schema(file_path)
     if not schema.metadata:
         return {}
