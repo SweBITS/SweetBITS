@@ -1,9 +1,12 @@
 import polars as pl
+import logging
 from pathlib import Path
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Dict, Any
 from joltax import JolTree
 from sweetbits.utils import parse_sample_id
 from sweetbits.metadata import get_standard_metadata, write_parquet_with_metadata
+
+logger = logging.getLogger(__name__)
 
 def generate_table_logic(
     input_parquet: Path,
@@ -15,12 +18,15 @@ def generate_table_logic(
     min_reads: int = 50,
     clade_filter: Optional[int] = None,
     keep_unclassified: bool = False
-):
+) -> Dict[str, Any]:
     """
     Generates an abundance table from a merged REPORT_PARQUET file.
+    Returns a summary dictionary of the operation.
     """
     # 1. Load Data
     df = pl.read_parquet(input_parquet)
+    
+    total_samples_in_file = df["sample_id"].n_unique()
     
     # 2. Filtering Samples
     if exclude_samples:
@@ -28,6 +34,17 @@ def generate_table_logic(
             excluded_ids = [line.strip() for line in f if line.strip()]
         df = df.filter(~pl.col("sample_id").is_in(excluded_ids))
         
+    active_samples = df["sample_id"].n_unique()
+    
+    # Warning for high min_observed
+    if min_observed > (active_samples / 2) and active_samples > 0:
+        import click
+        click.secho(
+            f"Warning: --min-observed ({min_observed}) is more than 50% of active samples ({active_samples}). "
+            "This may result in an empty or very sparse table.", 
+            fg="yellow", err=True
+        )
+
     # 3. Mode Handling & Clade Filtering (Requires JolTax)
     tree = None
     if mode in ["clade", "canonical"] or clade_filter is not None:
@@ -71,17 +88,21 @@ def generate_table_logic(
     # 6. Apply Filters (min_observed, min_reads)
     sample_cols = [c for c in table.columns if c != "t_id"]
     
-    if min_observed > 0:
-        obs_count = table.select([
-            pl.sum_horizontal([pl.col(c) > 0 for c in sample_cols]).alias("count")
-        ])["count"]
-        table = table.filter(obs_count >= min_observed)
-        
-    if min_reads > 0:
-        max_reads = table.select([
-            pl.max_horizontal(sample_cols).alias("max_val")
-        ])["max_val"]
-        table = table.filter(max_reads >= min_reads)
+    if not sample_cols:
+        # Handle case where no samples are left
+        table = pl.DataFrame(schema={"t_id": pl.UInt32})
+    else:
+        if min_observed > 0:
+            obs_count = table.select([
+                pl.sum_horizontal([pl.col(c) > 0 for c in sample_cols]).alias("count")
+            ])["count"]
+            table = table.filter(obs_count >= min_observed)
+            
+        if min_reads > 0:
+            max_reads = table.select([
+                pl.max_horizontal(sample_cols).alias("max_val")
+            ])["max_val"]
+            table = table.filter(max_reads >= min_reads)
         
     # 7. Output based on extension
     ext = output_file.suffix.lower()
@@ -94,3 +115,9 @@ def generate_table_logic(
         table.write_csv(output_file, separator="\t")
     else:
         raise ValueError(f"Unsupported output format: {ext}")
+        
+    return {
+        "active_samples": active_samples,
+        "rows_output": table.height,
+        "output_file": str(output_file)
+    }
