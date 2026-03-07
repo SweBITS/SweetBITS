@@ -1,23 +1,17 @@
 """
 sweetbits.reports
-Logic for parsing and merging Kraken 2 report files.
+Logic for parsing and merging Kraken 2 report files with automatic format detection.
 """
 
 import polars as pl
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any
 from sweetbits.utils import parse_sample_id
 from sweetbits.metadata import get_standard_metadata, write_parquet_with_metadata
 
 def detect_report_format(file_path: Path) -> str:
     """
     Sniffs the first line of a Kraken report to determine its format.
-    
-    Returns:
-        'HYPERLOGLOG' if 8 columns, 'LEGACY' if 6 columns.
-    
-    Raises:
-        ValueError: If the column count is neither 6 nor 8.
     """
     with open(file_path, "r") as f:
         first_line = f.readline()
@@ -34,7 +28,7 @@ def detect_report_format(file_path: Path) -> str:
 
 def parse_kraken_report(file_path: Path, report_format: str) -> pl.DataFrame:
     """
-    Parses a Kraken report file based on the detected format.
+    Parses a Kraken report file into a Polars DataFrame based on its format.
     """
     if report_format == "HYPERLOGLOG":
         schema = {
@@ -67,10 +61,10 @@ def gather_reports_logic(
     output_file: Path,
     recursive: bool = True,
     include_pattern: str = "*.report"
-) -> None:
+) -> Dict[str, Any]:
     """
-    Finds and merges Kraken report files into a single Parquet file.
-    Enforces format consistency (all 6-col or all 8-col).
+    Finds and merges Kraken report files into a single long-format Parquet file.
+    Returns summary metadata about the merge process.
     """
     search_path = "**/" + include_pattern if recursive else include_pattern
     report_files = list(input_dir.glob(search_path))
@@ -78,7 +72,7 @@ def gather_reports_logic(
     if not report_files:
         raise FileNotFoundError(f"No files matching '{include_pattern}' found in {input_dir}")
         
-    # 1. Determine Report Format and Batch Consistency
+    # 1. Determine Report Format and Ensure Batch Consistency
     report_format = detect_report_format(report_files[0])
     for f in report_files[1:]:
         fmt = detect_report_format(f)
@@ -102,7 +96,7 @@ def gather_reports_logic(
             
     data_standard = "SWEBITS" if is_swebits else "GENERIC"
     
-    # 3. Process Files
+    # 3. Process and Stack Files
     dfs = []
     for i, file_path in enumerate(report_files):
         sample_id = file_path.name.split('.')[0]
@@ -127,7 +121,7 @@ def gather_reports_logic(
     sort_keys = ["year", "week", "sample_id", "t_id"] if is_swebits else ["sample_id", "t_id"]
     merged_df = merged_df.sort(sort_keys)
     
-    # 5. Save with Metadata
+    # 5. Save with comprehensive Metadata
     metadata = get_standard_metadata(
         file_type="REPORT_PARQUET", 
         source_path=input_dir,
@@ -144,3 +138,10 @@ def gather_reports_logic(
         compression="zstd", 
         compression_level=3
     )
+    
+    return {
+        "report_format": report_format,
+        "data_standard": data_standard,
+        "files_merged": len(report_files),
+        "total_rows": merged_df.height
+    }

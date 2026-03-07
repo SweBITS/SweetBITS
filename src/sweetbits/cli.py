@@ -29,8 +29,6 @@ def print_footer(start_time, summary_dict=None):
     elapsed = time.time() - start_time
     click.echo("-" * 60, err=True)
     if summary_dict:
-        # Sort keys to ensure 'Status' or specific order if desired, 
-        # but iterating naturally is fine.
         for k, v in summary_dict.items():
             label = k.replace("_", " ").title()
             click.echo(f"{label:20}: {v}", err=True)
@@ -64,13 +62,15 @@ def gather_reports(directory, output, recursive, include):
     print_parameters(ctx.params)
     
     try:
-        gather_reports_logic(
+        summary = gather_reports_logic(
             input_dir=directory,
             output_file=output,
             recursive=recursive,
             include_pattern=include
         )
-        print_footer(start_time, {"status": "Success", "output_file": str(output)})
+        summary["status"] = "Success"
+        summary["output_file"] = str(output)
+        print_footer(start_time, summary)
     except Exception as e:
         click.secho(f"Error: {str(e)}", fg="red", err=True)
         sys.exit(1)
