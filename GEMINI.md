@@ -27,7 +27,14 @@ Reads are classified using a custom fork of Kraken 2 against a 3TB custom databa
 
 ### 1. `<KRAKEN_PARQUET>`
 A parquet file representing a single sample's read-by-read data, sorted by `t_id`.
-**Metadata:** Must include `sweetbits_version`, `file_type: KRAKEN_PARQUET`, `execution_command`, `creation_time`, and `source_path_abs`.
+**Metadata:** Must include:
+- `sweetbits_version`
+- `file_type: KRAKEN_PARQUET`
+- `execution_command`
+- `creation_time`
+- `file_path_abs`: Absolute path to this file.
+- `compression`: Compression algorithm used.
+- `sorting`: Column(s) used for sorting.
 
 | Column | Type | Description |
 | :--- | :--- | :--- |
@@ -57,7 +64,14 @@ A parquet file representing a single sample's read-by-read data, sorted by `t_id
 ### 2. `<REPORT_PARQUET>`
 A single long-format parquet file containing merged, relevant counts from multiple report files.
 Sorted by `year`, `week`, `sample_id`, and `t_id`. Compressed with `zstd`.
-**Metadata:** Must include `sweetbits_version`, `file_type: REPORT_PARQUET`, `execution_command`, `creation_time`, and `source_path_abs`.
+**Metadata:** Must include:
+- `sweetbits_version`
+- `file_type: REPORT_PARQUET`
+- `execution_command`
+- `creation_time`
+- `source_path_abs`: Absolute path to the input directory.
+- `compression`: Compression algorithm used.
+- `sorting`: Column(s) used for sorting.
 
 | Column | Type | Description |
 | :--- | :--- | :--- |
@@ -98,7 +112,7 @@ Merges multiple 8-column Kraken reports into a single Parquet file.
   - Extract `sample_id` from filename (base name before all extensions).
   - Validate `sample_id` using `parse_sample_id()`.
   - Include `source_file` column for provenance (relative path).
-  - **Write global Parquet metadata** (version, command, timestamp, absolute input path).
+  - **Write global Parquet metadata** (version, command, timestamp, absolute input path, compression, sorting).
 
 #### `prune_parquet` (Future)
 Reduces columns in `<KRAKEN_PARQUET>` files (e.g., dropping k-mer strings after GBM feature calculation) to save space.
@@ -200,5 +214,6 @@ Prints the global metadata stored in a SweetBITS-generated Parquet file.
 1. [x] Generate test data (Ljungbyhed sample, 100 reads, mock taxonomy).
 2. [x] Implement `gather_reports` to merge Kraken reports.
 3. [x] Implement `table` for abundance matrix generation.
-4. [ ] Implement `extract_reads` for FASTQ streaming.
-5. [ ] TBD...
+4. [x] Implement `extract_reads` for FASTQ streaming.
+5. [ ] Implement `annotate_table` for taxonomic annotation and sorting.
+6. [ ] TBD...

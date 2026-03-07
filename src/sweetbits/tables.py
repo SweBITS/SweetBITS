@@ -89,7 +89,6 @@ def generate_table_logic(
     sample_cols = [c for c in table.columns if c != "t_id"]
     
     if not sample_cols:
-        # Handle case where no samples are left
         table = pl.DataFrame(schema={"t_id": pl.UInt32})
     else:
         if min_observed > 0:
@@ -107,7 +106,12 @@ def generate_table_logic(
     # 7. Output based on extension
     ext = output_file.suffix.lower()
     if ext == ".parquet":
-        metadata = get_standard_metadata(file_type="RAW_TABLE", source_path=input_parquet)
+        metadata = get_standard_metadata(
+            file_type="RAW_TABLE", 
+            source_path=input_parquet,
+            compression="Uncompressed (Snappy default)",
+            sorting="None"
+        )
         write_parquet_with_metadata(table, output_file, metadata)
     elif ext == ".csv":
         table.write_csv(output_file)

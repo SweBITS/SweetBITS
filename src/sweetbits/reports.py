@@ -8,8 +8,6 @@ def parse_kraken_report(file_path: Path) -> pl.DataFrame:
     """
     Parses a single 8-column Kraken report file into a Polars DataFrame.
     """
-    # Column names based on the 8-column format
-    # Percentage, Clade reads, Taxon reads, Total minimizers, Unique minimizers, Rank code, TaxID, Scientific name
     schema = {
         "column_1": pl.Float64, # Percentage
         "column_2": pl.UInt32,  # Clade reads
@@ -21,7 +19,6 @@ def parse_kraken_report(file_path: Path) -> pl.DataFrame:
         "column_8": pl.String,  # Name
     }
     
-    # Read CSV (TSV)
     df = pl.read_csv(
         file_path,
         has_header=False,
@@ -30,7 +27,6 @@ def parse_kraken_report(file_path: Path) -> pl.DataFrame:
         new_columns=["pct", "clade_reads", "taxon_reads", "mm_tot", "mm_uniq", "rank", "t_id", "name"]
     )
     
-    # Select only the columns we need for <REPORT_PARQUET>
     return df.select(["clade_reads", "taxon_reads", "mm_tot", "mm_uniq", "t_id"])
 
 def gather_reports_logic(
@@ -42,7 +38,6 @@ def gather_reports_logic(
     """
     Finds and merges Kraken report files into a single Parquet file.
     """
-    # 1. Discovery
     search_path = "**/" + include_pattern if recursive else include_pattern
     report_files = list(input_dir.glob(search_path))
     
@@ -51,41 +46,36 @@ def gather_reports_logic(
         
     dfs = []
     for file_path in report_files:
-        # Extract sample_id (filename before all extensions)
-        # e.g., Lj-2022_20_001.kraken.report -> Lj-2022_20_001
         sample_id = file_path.name.split('.')[0]
-        
-        # Validate and get metadata
         info = parse_sample_id(sample_id)
-        
-        # Parse content
         df = parse_kraken_report(file_path)
         
-        # Add metadata and provenance
         df = df.with_columns([
             pl.lit(sample_id).alias("sample_id"),
             pl.lit(info["year"]).cast(pl.UInt16).alias("year"),
             pl.lit(info["week"]).cast(pl.UInt8).alias("week"),
             pl.lit(str(file_path.relative_to(input_dir))).alias("source_file")
         ])
-        
         dfs.append(df)
         
-    # 2. Merge
     merged_df = pl.concat(dfs)
     
-    # 3. Final Schema & Sorting
-    # Reorder columns to match GEMINI.md
     final_cols = [
         "sample_id", "year", "week", "t_id", 
         "clade_reads", "taxon_reads", "mm_tot", "mm_uniq", 
         "source_file"
     ]
     
+    sorting = "year, week, sample_id, t_id"
     merged_df = merged_df.select(final_cols).sort(["year", "week", "sample_id", "t_id"])
     
-    # 4. Save with zstd compression and metadata
-    metadata = get_standard_metadata(file_type="REPORT_PARQUET", source_path=input_dir)
+    # Save with zstd compression and metadata
+    metadata = get_standard_metadata(
+        file_type="REPORT_PARQUET", 
+        source_path=input_dir,
+        compression="zstd (level 3)",
+        sorting=sorting
+    )
     write_parquet_with_metadata(
         merged_df, 
         output_file, 

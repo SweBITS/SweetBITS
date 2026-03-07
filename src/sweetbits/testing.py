@@ -90,7 +90,13 @@ def generate_mock_kraken_parquet(
     ])
     
     if output_path:
-        metadata = get_standard_metadata(file_type="KRAKEN_PARQUET", source_path=Path.cwd())
+        # Use output_path as source_path to record absolute file path
+        metadata = get_standard_metadata(
+            file_type="KRAKEN_PARQUET", 
+            source_path=output_path,
+            compression="Uncompressed (Snappy default)",
+            sorting="t_id"
+        )
         write_parquet_with_metadata(df, output_path, metadata)
     
     return df
@@ -129,7 +135,12 @@ def generate_mock_report_parquet(
     ])
     
     if output_path:
-        metadata = get_standard_metadata(file_type="REPORT_PARQUET", source_path=Path.cwd())
+        metadata = get_standard_metadata(
+            file_type="REPORT_PARQUET", 
+            source_path=Path.cwd(),
+            compression="Uncompressed (Snappy default)",
+            sorting="year, week, sample_id, t_id"
+        )
         write_parquet_with_metadata(df, output_path, metadata)
         
     return df
