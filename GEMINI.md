@@ -32,9 +32,9 @@ A parquet file representing a single sample's read-by-read data, sorted by `t_id
 - `file_type: KRAKEN_PARQUET`
 - `execution_command`
 - `creation_time`
-- `file_path_abs`: Absolute path to this file.
 - `compression`: Compression algorithm used.
 - `sorting`: Column(s) used for sorting.
+- `source_path_abs`: Absolute path to the original source file.
 
 | Column | Type | Description |
 | :--- | :--- | :--- |
@@ -69,9 +69,9 @@ Sorted by `year`, `week`, `sample_id`, and `t_id`. Compressed with `zstd`.
 - `file_type: REPORT_PARQUET`
 - `execution_command`
 - `creation_time`
-- `source_path_abs`: Absolute path to the input directory.
 - `compression`: Compression algorithm used.
 - `sorting`: Column(s) used for sorting.
+- `source_path_abs`: Absolute path to the input directory.
 
 | Column | Type | Description |
 | :--- | :--- | :--- |
@@ -123,7 +123,7 @@ Reduces columns in `<KRAKEN_PARQUET>` files (e.g., dropping k-mer strings after 
 Outputs abundance tables with `t_id` as the index and samples (YYYY_WW) as columns.
 - **Inputs:** `<REPORT_PARQUET>`
 - **Arguments:**
-  - `--mode`: `[taxon, clade, canonical]`
+  - `--mode`: `[taxon, clade, canonical]` (Default: `clade`)
   - `--output FILE`: Path to the output file (Supported: `.csv`, `.tsv`, `.parquet`). Format inferred from suffix.
   - `--taxonomy DIR`: JolTax cache directory (Required for `--clade` or `canonical`).
 - **Filters (Optional):**
@@ -133,7 +133,15 @@ Outputs abundance tables with `t_id` as the index and samples (YYYY_WW) as colum
   - `--clade INT`: Output only taxa rooted at this TaxID.
 - **Flags:**
   - `--keep_unclassified`: (Default: False).
-- **Implementation Note:** Sorting is not required for `<RAW_TABLE>`; logical ordering is handled during annotation.
+- **Abundance Modes Explained:**
+  - `taxon`: Raw `taxon_reads` from the Kraken report (reads assigned directly to this TaxID).
+  - `clade`: Raw `clade_reads` from the Kraken report (cumulative reads for this taxon and all its descendants). **Caution:** This mode contains redundant counts across ranks.
+  - `canonical`: Calculates **Canonical Remainders** using the `CanoniCal` algorithm. It ensures abundance is only attributed to standard ranks (Species, Genus, Family, etc.) without double-counting.
+    - Uses `clade_reads` as input.
+    - Identifies the Nearest Canonical Ancestor (NCA) for every node.
+    - Subtracts the sum of all canonical child clades from the parent's clade count.
+    - Corrects for "skipped ranks" and non-canonical assignments (e.g., `subgenus`).
+    - The sum of all remainders in a sample exactly equals the total reads.
 
 #### `clr`
 Takes `<RAW_TABLE>` (from `table`) and calculates Centered Log Ratio using Bayesian multiplicative replacement for zeroes.
