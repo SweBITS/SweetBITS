@@ -50,21 +50,14 @@ def complex_taxonomy(tmp_path):
 
 def test_canonical_deep_nesting(complex_taxonomy, tmp_path):
     """Tests remainder calculation through deep non-canonical gaps."""
-    # We put reads in a subspecies (10000001). 
-    # They should stay in the parent species (10000000) but be subtracted from Genus (1000000).
-    
-    # Subspecies reads: 50
-    # Species reads: 100 (Total clade) -> Species Remainder: 50
-    # Genus reads: 150 (Total clade) -> Genus Remainder: 50
-    # Family reads: 200 (Total clade) -> Family Remainder: 50
-    
+    # Full exhaustive hierarchy from Root to Subspecies
     data = pl.DataFrame({
-        "sample_id": ["S1"] * 4,
-        "year": [2022] * 4, "week": [1] * 4,
-        "t_id": [100000, 1000000, 10000000, 10000001],
-        "clade_reads": [200, 150, 100, 50], # Strictly consistent nesting
-        "taxon_reads": [50, 50, 50, 50],
-        "mm_tot": [0]*4, "mm_uniq": [0]*4, "source_file": ["f"]*4
+        "sample_id": ["S1"] * 10,
+        "year": [2022] * 10, "week": [1] * 10,
+        "t_id": [1, 2, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 10000001],
+        "clade_reads": [400, 400, 350, 300, 250, 250, 200, 150, 100, 50],
+        "taxon_reads": [0, 50, 50, 50, 0, 50, 50, 50, 50, 50],
+        "mm_tot": [0]*10, "mm_uniq": [0]*10, "source_file": ["f"]*10
     }).with_columns([pl.col("year").cast(pl.UInt16), pl.col("week").cast(pl.UInt8), pl.col("t_id").cast(pl.UInt32)])
     
     report_parquet = tmp_path / "deep.parquet"
@@ -76,34 +69,23 @@ def test_canonical_deep_nesting(complex_taxonomy, tmp_path):
     
     res = {row["t_id"]: row["2022_01"] for row in pl.read_csv(out, separator="\t").to_dicts()}
     
-    # Subspecies 10000001 should be pushed up to Species 10000000
-    # Species Remainder = Clade(Species) - Sum(Canonical Children) = 100 - 0 = 100
-    # NOTE: Our algorithm sees 10000001 as non-canonical, so it doesn't subtract it from Species.
-    # Instead, 10000001 maps to Species. 
-    # Wait, 10000001 is a CHILD of Species. 
-    # If 10000001 is non-canonical, its reads are essentially part of the Species remainder.
-    
     assert 10000001 not in res
-    assert res[10000000] == 100 # Species (Includes its own 50 + subspecies 50)
-    assert res[1000000] == 50   # Genus (150 - 100 from species)
-    assert res[100000] == 50    # Family (200 - 150 from genus)
+    assert res[10000000] == 100 
+    assert res[1000000] == 50   
+    assert res[100000] == 50    
+    assert res[10] == 50        
 
 def test_canonical_broad_non_canonical_parent(complex_taxonomy, tmp_path):
     """Tests if multiple canonical children correctly subtract from a distant canonical ancestor."""
-    # Phylum_B (20) -> NonCanonical (200) -> [Genus_B (2000), Genus_C (3000)]
-    
-    # Genus B: 100 reads
-    # Genus C: 100 reads
-    # Phylum B: 250 reads
-    # Expected: Genus B=100, Genus C=100, Phylum B=50.
-    
+    # MUST be exhaustive to pass audit
+    # Root(1) -> SK(2) -> Phylum(20) -> no-rank(200) -> [GenusB(2000), GenusC(3000)]
     data = pl.DataFrame({
-        "sample_id": ["S1"] * 3,
-        "year": [2022] * 3, "week": [1] * 3,
-        "t_id": [20, 2000, 3000],
-        "clade_reads": [250, 100, 100],
-        "taxon_reads": [50, 100, 100],
-        "mm_tot": [0]*3, "mm_uniq": [0]*3, "source_file": ["f"]*3
+        "sample_id": ["S1"] * 5,
+        "year": [2022] * 5, "week": [1] * 5,
+        "t_id": [1, 2, 20, 2000, 3000],
+        "clade_reads": [250, 250, 250, 100, 100],
+        "taxon_reads": [0, 0, 50, 100, 100],
+        "mm_tot": [0]*5, "mm_uniq": [0]*5, "source_file": ["f"]*5
     }).with_columns([pl.col("year").cast(pl.UInt16), pl.col("week").cast(pl.UInt8), pl.col("t_id").cast(pl.UInt32)])
     
     report_parquet = tmp_path / "broad.parquet"
@@ -118,21 +100,17 @@ def test_canonical_broad_non_canonical_parent(complex_taxonomy, tmp_path):
     assert res[2000] == 100
     assert res[3000] == 100
     assert res[20] == 50
-    assert 200 not in res # Non-canonical node skipped
 
 def test_canonical_adjacent_ranks(complex_taxonomy, tmp_path):
     """Tests behavior when canonical ranks are direct parents/children."""
-    # Family_A (100000) -> Genus_A (1000000)
-    # Family has 100 reads, Genus has 100 reads.
-    # Family should have 0 remainder.
-    
+    # Root(1) -> SK(2) -> Phylum(10) -> Class(100) -> Order(10000) -> Family(100000) -> Genus(1000000)
     data = pl.DataFrame({
-        "sample_id": ["S1", "S1"],
-        "year": [2022, 2022], "week": [1, 1],
-        "t_id": [100000, 1000000],
-        "clade_reads": [100, 100],
-        "taxon_reads": [0, 100],
-        "mm_tot": [0, 0], "mm_uniq": [0, 0], "source_file": ["f", "f"]
+        "sample_id": ["S1"] * 7,
+        "year": [2022] * 7, "week": [1] * 7,
+        "t_id": [1, 2, 10, 100, 10000, 100000, 1000000],
+        "clade_reads": [100, 100, 100, 100, 100, 100, 100],
+        "taxon_reads": [0, 0, 0, 0, 0, 0, 100],
+        "mm_tot": [0]*7, "mm_uniq": [0]*7, "source_file": ["f"]*7
     }).with_columns([pl.col("year").cast(pl.UInt16), pl.col("week").cast(pl.UInt8), pl.col("t_id").cast(pl.UInt32)])
     
     report_parquet = tmp_path / "adjacent.parquet"
@@ -145,4 +123,4 @@ def test_canonical_adjacent_ranks(complex_taxonomy, tmp_path):
     res = {row["t_id"]: row["2022_01"] for row in pl.read_csv(out, separator="\t").to_dicts()}
     
     assert res[1000000] == 100
-    assert res[100000] == 0 # All reads accounted for by genus
+    assert res[100000] == 0

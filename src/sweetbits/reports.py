@@ -30,7 +30,8 @@ def detect_report_format(file_path: Path) -> str:
         first_line = f.readline()
         if not first_line:
             raise ValueError(f"Report file is empty: {file_path}")
-        cols = len(first_line.split('\t'))
+        # Defensive: strip trailing whitespace to avoid line-ending artifacts
+        cols = len(first_line.rstrip().split('\t'))
         
     if cols == 8:
         return "HYPERLOGLOG"
@@ -54,30 +55,41 @@ def parse_kraken_report(file_path: Path, report_format: str) -> pl.DataFrame:
         A Polars DataFrame containing extracted taxonomic and read counts.
     """
     if report_format == "HYPERLOGLOG":
+        # Indices: pct=0, clade_reads=1, taxon_reads=2, mm_tot=3, mm_uniq=4, rank=5, t_id=6, name=7
+        keep_indices = [1, 2, 3, 4, 6]
+        # Schema MUST contain entries for all columns in the file, even if skipped.
         schema = {
             "column_1": pl.Float32, "column_2": pl.UInt32, "column_3": pl.UInt32,
             "column_4": pl.UInt64, "column_5": pl.UInt32, "column_6": pl.String,
             "column_7": pl.UInt32, "column_8": pl.String,
         }
-        new_names = ["pct", "clade_reads", "taxon_reads", "mm_tot", "mm_uniq", "rank", "t_id", "name"]
-        keep_cols = ["clade_reads", "taxon_reads", "mm_tot", "mm_uniq", "t_id"]
+        new_names = {
+            "column_2": "clade_reads", "column_3": "taxon_reads", 
+            "column_4": "mm_tot", "column_5": "mm_uniq", "column_7": "t_id"
+        }
     else: # LEGACY
+        # Indices: pct=0, clade_reads=1, taxon_reads=2, rank=3, t_id=4, name=5
+        keep_indices = [1, 2, 4]
         schema = {
             "column_1": pl.Float32, "column_2": pl.UInt32, "column_3": pl.UInt32,
             "column_4": pl.String, "column_5": pl.UInt32, "column_6": pl.String,
         }
-        new_names = ["pct", "clade_reads", "taxon_reads", "rank", "t_id", "name"]
-        keep_cols = ["clade_reads", "taxon_reads", "t_id"]
+        new_names = {
+            "column_2": "clade_reads", "column_3": "taxon_reads", "column_5": "t_id"
+        }
 
+    # Optimization: columns argument ensures Polars only allocates RAM for our subset.
+    # Note: When columns is provided as indices, it uses 0-based indexing.
+    # When has_header=False, Polars uses "column_1", "column_2", etc.
     df = pl.read_csv(
         file_path,
         has_header=False,
         separator="\t",
         schema=schema,
-        new_columns=new_names
-    )
+        columns=[f"column_{i+1}" for i in keep_indices]
+    ).rename(new_names)
     
-    return df.select(keep_cols)
+    return df
 
 def gather_reports_logic(
     input_dir: Path,
@@ -113,7 +125,7 @@ def gather_reports_logic(
         ValueError        : If mixed report formats are detected in the same batch.
     """
     search_path = "**/" + include_pattern if recursive else include_pattern
-    report_files = list(input_dir.glob(search_path))
+    report_files = sorted(list(input_dir.glob(search_path)))
     
     if not report_files:
         raise FileNotFoundError(f"No files matching '{include_pattern}' found in {input_dir}")
@@ -121,21 +133,18 @@ def gather_reports_logic(
     # 1. Determine Report Format and Ensure Batch Consistency
     report_format = detect_report_format(report_files[0])
     for f in report_files[1:]:
-        fmt = detect_report_format(f)
-        if fmt != report_format:
+        if detect_report_format(f) != report_format:
             raise ValueError(
-                f"Mixed report formats detected. First file is {report_format}, "
-                f"but '{f.name}' is {fmt}. Batch must be consistent."
+                f"Mixed report formats detected. Batch must be consistent (Found: {report_format} vs {f.name})"
             )
 
     # 2. Determine Data Standard (SWEBITS vs GENERIC)
+    sample_metadata = []
     is_swebits = True
-    parsed_metadata = []
     for f in report_files:
         sample_id = f.name.split('.')[0]
         try:
-            info = parse_sample_id(sample_id)
-            parsed_metadata.append(info)
+            sample_metadata.append(parse_sample_id(sample_id))
         except ValueError:
             is_swebits = False
             break
@@ -154,7 +163,7 @@ def gather_reports_logic(
         }
         
         if is_swebits:
-            info = parsed_metadata[i]
+            info = sample_metadata[i]
             cols["year"] = pl.lit(info["year"]).cast(pl.UInt16)
             cols["week"] = pl.lit(info["week"]).cast(pl.UInt8)
             
