@@ -46,6 +46,17 @@ sweetbits table merged_reports.parquet \
 
 Transform numeric abundance matrices into human-readable files sorted by taxonomy, and integrate external metadata.
 
+### How External Metadata Works
+You can join any number of external metadata files (CSV, TSV, or Parquet) to your abundance table. 
+- **Requirement:** Every metadata file **MUST** contain a `t_id` column. This is used as the key for the left-join.
+- **What gets added:** Every column from the metadata file (except `t_id`) will be appended to the output table.
+- **Collisions:** If a metadata file contains a column name that already exists in your table, SweetBITS will automatically append the filename to the column (e.g., `status` becomes `status_gbif_flags`) and issue a warning.
+- **Column Order:** The final output is strictly ordered to maximize readability:
+  1. `t_id` and all taxonomic ranks (`t_scientific_name`, `t_phylum`, etc.)
+  2. All external metadata columns (in the order the files were provided)
+  3. `median_abundance` and `mean_abundance` (dynamically calculated)
+  4. The raw sample abundance matrix
+
 ```bash
 # Basic taxonomy annotation and hierarchical sorting
 sweetbits annotate-table canonical_table.tsv \
