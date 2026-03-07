@@ -8,21 +8,33 @@ from sweetbits import __version__
 from sweetbits.reports import gather_reports_logic
 from sweetbits.tables import generate_table_logic
 from sweetbits.metadata import read_parquet_metadata
+from sweetbits.reads import extract_reads_logic
 
 def print_header(ctx):
-    click.echo(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    click.echo(f"Toolkit Version: {__version__}")
-    click.echo(f"CWD: {os.getcwd()}")
-    click.echo(f"Command: sweetbits {' '.join(sys.argv[1:])}")
-    click.echo("-" * 40)
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    click.echo(f"{'Start time':20}: {now}", err=True)
+    click.echo(f"{'Toolkit Version':20}: {__version__}", err=True)
+    click.echo(f"{'CWD':20}: {os.getcwd()}", err=True)
+    click.echo(f"{'Command':20}: sweetbits {' '.join(sys.argv[1:])}", err=True)
+    click.echo("-" * 60, err=True)
 
-def print_footer(start_time, summary=""):
+def print_parameters(params):
+    click.secho("Parameters:", fg="bright_black", bold=True, err=True)
+    for k, v in params.items():
+        label = k.replace("_", " ").title()
+        click.echo(click.style(f"  {label:18}: ", fg="bright_black") + click.style(f"{v}", fg="bright_black"), err=True)
+    click.echo("-" * 60, err=True)
+
+def print_footer(start_time, summary_dict=None):
     elapsed = time.time() - start_time
-    click.echo("-" * 40)
-    if summary:
-        click.echo(summary)
-    click.echo(f"Time elapsed: {elapsed:.2f}s")
-    click.echo(f"End time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    click.echo("-" * 60, err=True)
+    if summary_dict:
+        for k, v in summary_dict.items():
+            label = k.replace("_", " ").title()
+            click.echo(f"{label:20}: {v}", err=True)
+            
+    click.echo(f"{'Time elapsed':20}: {elapsed:.2f}s", err=True)
+    click.echo(f"{'End time':20}: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", err=True)
 
 CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 
@@ -45,7 +57,9 @@ def gather_reports(directory, output, recursive, include):
     Parquet file, including provenance and temporal metadata.
     """
     start_time = time.time()
-    print_header(click.get_current_context())
+    ctx = click.get_current_context()
+    print_header(ctx)
+    print_parameters(ctx.params)
     
     try:
         gather_reports_logic(
@@ -54,7 +68,7 @@ def gather_reports(directory, output, recursive, include):
             recursive=recursive,
             include_pattern=include
         )
-        print_footer(start_time, f"Successfully merged reports into {output}")
+        print_footer(start_time, {"status": "Success", "output_file": str(output)})
     except Exception as e:
         click.secho(f"Error: {str(e)}", fg="red", err=True)
         sys.exit(1)
@@ -75,10 +89,12 @@ def table(input_parquet, output, mode, taxonomy, exclude_samples, min_observed, 
     Supports filtering by clade, minimum occupancy, and read depth.
     """
     start_time = time.time()
-    print_header(click.get_current_context())
+    ctx = click.get_current_context()
+    print_header(ctx)
+    print_parameters(ctx.params)
     
     try:
-        generate_table_logic(
+        summary = generate_table_logic(
             input_parquet=input_parquet,
             output_file=output,
             mode=mode,
@@ -89,7 +105,58 @@ def table(input_parquet, output, mode, taxonomy, exclude_samples, min_observed, 
             clade_filter=clade,
             keep_unclassified=keep_unclassified
         )
-        print_footer(start_time, f"Successfully generated table: {output}")
+        print_footer(start_time, summary)
+    except Exception as e:
+        click.secho(f"Error: {str(e)}", fg="red", err=True)
+        sys.exit(1)
+
+@main.command(short_help="Extract reads from kraken parquet files into FASTQ.")
+@click.argument("input_path", type=click.Path(exists=True, path_type=Path))
+@click.option("--taxonomy", "-t", type=click.Path(exists=True, path_type=Path), required=True, help="JolTax cache directory.")
+@click.option("--tax-id", "-i", required=True, help="Comma-separated TaxIDs to extract.")
+@click.option("--output-dir", "-o", type=click.Path(path_type=Path), default=Path("."), help="Directory to save FASTQ files.")
+@click.option("--mode", "-m", type=click.Choice(["taxon", "clade"]), default="clade", help="Extraction mode (Default: clade).")
+@click.option("--combine-samples", is_flag=True, help="Merge all samples into one file per TaxID.")
+@click.option("--year-start", type=int, help="Start year for temporal filtering.")
+@click.option("--week-start", type=int, help="Start week for temporal filtering.")
+@click.option("--year-end", type=int, help="End year for temporal filtering.")
+@click.option("--week-end", type=int, help="End week for temporal filtering.")
+def extract_reads(input_path, taxonomy, tax_id, output_dir, mode, combine_samples, year_start, week_start, year_end, week_end):
+    """
+    Streams KRAKEN_PARQUET files and extracts reads into FASTQ format based on 
+    TaxID, mode, and temporal window.
+    """
+    start_time = time.time()
+    ctx = click.get_current_context()
+    print_header(ctx)
+    print_parameters(ctx.params)
+    
+    # Parse tax_ids
+    try:
+        tids = [int(tid.strip()) for tid in tax_id.split(",")]
+    except ValueError:
+        click.secho("Error: --tax-id must be a comma-separated list of integers.", fg="red", err=True)
+        sys.exit(1)
+        
+    try:
+        summary = extract_reads_logic(
+            input_path=input_path,
+            taxonomy_dir=taxonomy,
+            tax_ids=tids,
+            output_dir=output_dir,
+            mode=mode,
+            combine_samples=combine_samples,
+            year_start=year_start,
+            week_start=week_start,
+            year_end=year_end,
+            week_end=week_end
+        )
+        footer_msg = {
+            "samples_processed": summary['samples_processed'],
+            "reads_extracted": summary['reads_extracted'],
+            "output_directory": str(summary['output_dir'])
+        }
+        print_footer(start_time, footer_msg)
     except Exception as e:
         click.secho(f"Error: {str(e)}", fg="red", err=True)
         sys.exit(1)
@@ -105,7 +172,7 @@ def inspect(parquet_file):
             return
             
         click.secho(f"File: {parquet_file.name}", fg="cyan", bold=True)
-        click.echo("-" * len(f"File: {parquet_file.name}"))
+        click.echo("-" * 60)
         for key, value in metadata.items():
             display_key = key.replace("_", " ").title()
             click.echo(f"{display_key:20}: {value}")

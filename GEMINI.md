@@ -127,8 +127,24 @@ Takes `<RAW_TABLE>` (from `table`) and calculates Centered Log Ratio using Bayes
 
 #### `extract_reads`
 Streams `<KRAKEN_PARQUET>` to extract reads into FASTQ format with minimal memory footprint.
-- **Required:** `--input FILE`, `--taxonomy DIR` (JolTax), `--tax_id LIST` (comma-separated Ints).
-- **Optional:** `--year LIST`, `--week LIST`, `--combine_output` (Default False: sample-specific files), `--mode [clade, taxon]` (Default: clade).
+- **Inputs:** `<KRAKEN_PARQUET>` file or directory.
+- **Arguments:**
+  - `--taxonomy DIR`: JolTax cache directory (Required).
+  - `--tax_id LIST`: Comma-separated TaxIDs to extract.
+  - `--output-dir DIR`: Directory to save FASTQ files.
+  - `--mode [clade, taxon]`: Extraction mode (Default: clade).
+  - `--combine-samples`: If True, merges all samples into one file per TaxID.
+- **Temporal Filters:**
+  - `--year-start`, `--year-end` (Optional)
+  - `--week-start`, `--week-end` (Optional)
+  - Interval logic: `(year, week) >= (start) AND (year, week) <= (end)`.
+- **Naming Convention:**
+  - Single Sample: `{sample_id}_{mode}_{tax_id}_{ShortName}_R[1/2].fastq.gz`
+  - Combined: `combined_{mode}_{tax_id}_{ShortName}_{RangeTag}_R[1/2].fastq.gz`
+  - `ShortName`: 
+    - >1 word: First two words, 3 letters each, PascalCase (e.g., "Homo sapiens" -> "HomSap").
+    - 1 word: Use whole word.
+  - `RangeTag`: e.g., `2013W50-to-2014W02` (Only for combined files when time filtering is active).
 
 #### `annotate_table`
 Amends `<RAW_TABLE>` with JolTax lineage metadata and outputs `<ANNOTATED_TABLE>`.
@@ -168,9 +184,11 @@ Prints the global metadata stored in a SweetBITS-generated Parquet file.
 
 ### UX & Logging
 - **Standard Output Header:** Every command must log: Start time, Toolkit Version, CWD, and the exact Invocation Command.
-- **Standard Output Footer:** Print a summary statement (e.g., rows processed, time elapsed, memory used).
+- **Parameter Logging:** Immediately after the header, log all parameter settings (including defaults) in a dimmed/subtle style (`bright_black`).
+- **Standard Output Footer:** Print a summary statement (e.g., records processed, active samples, time elapsed).
+- **Sanity Warnings:** Commands should issue warnings (in yellow) when parameter combinations are likely to produce unintended results (e.g., filtering out >50% of samples).
 - **Progress:** Use `click.progressbar` or similar for long-running tasks.
-- **Docs:** Google docstrings for code. Simple, explanatory USAGE.md with a machine-readable API section. Avoid marketing superlatives.
+- **Docs:** Google docstrings for code. Simple, explanatory README.md with usage examples. Avoid marketing superlatives.
 
 ### Input Data Strict Assumptions
 - Paired-end data of max 2x150bp.
