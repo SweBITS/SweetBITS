@@ -35,9 +35,6 @@ def generate_table_logic(
     - 'canonical': Canonical remainders. Essentially taxon mode but where reads 
                    between canonical ranks have been pushed up to the nearest 
                    canonical ancestor (NCA). Ensures mass balance.
- Essentially
-                   taxon mode but where reads between canonical ranks have been 
-                   pushed up to the nearest canonical ancestor (NCA).
 
     Args:
         input_parquet: Path to the merged REPORT_PARQUET file.

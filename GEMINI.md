@@ -137,7 +137,7 @@ Outputs abundance tables with `t_id` as the index and samples (YYYY_WW) as colum
 - **Abundance Modes Explained:**
   - `taxon`: Raw `taxon_reads` from the Kraken report (reads assigned directly to this TaxID).
   - `clade`: Raw `clade_reads` from the Kraken report (cumulative reads for this taxon and all its descendants). **Caution:** This mode contains redundant counts across ranks.
-  - `canonical`: Calculates **Canonical Remainders** using the `CanoniCal` algorithm. It ensures abundance is only attributed to standard ranks (Species, Genus, Family, etc.) without double-counting.
+  - `canonical`: **Canonical Remainders**. Essentially taxon mode but where reads between canonical ranks have been pushed up to the nearest canonical ancestor (NCA). This eliminates double-counting while conserving mass balance.
     - Uses `clade_reads` as input.
     - Identifies the Nearest Canonical Ancestor (NCA) for every node.
     - Subtracts the sum of all canonical child clades from the parent's clade count.
