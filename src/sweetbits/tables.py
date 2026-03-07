@@ -32,7 +32,12 @@ def generate_table_logic(
     This function handles three primary abundance modes:
     - 'taxon': Raw reads assigned directly to a TaxID.
     - 'clade': Cumulative reads for a taxon and all descendants (redundant).
-    - 'canonical': Canonical remainders (eliminates double-counting).
+    - 'canonical': Canonical remainders. Essentially taxon mode but where reads 
+                   between canonical ranks have been pushed up to the nearest 
+                   canonical ancestor (NCA). Ensures mass balance.
+ Essentially
+                   taxon mode but where reads between canonical ranks have been 
+                   pushed up to the nearest canonical ancestor (NCA).
 
     Args:
         input_parquet: Path to the merged REPORT_PARQUET file.
