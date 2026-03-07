@@ -44,6 +44,23 @@ SweetBITS automatically detects and adapts to two distinct schema profiles based
 
 ---
 
+## Report Format Profiles
+
+SweetBITS supports two different input report formats and tracks them in the Parquet metadata:
+
+### 1. **HYPERLOGLOG (8-column)**
+- **Metadata:** `report_format: HYPERLOGLOG`
+- **Features:** Includes minimizer metrics (`mm_tot`, `mm_uniq`).
+- **Required By:** Future tools for assembly quality estimation and GBM features.
+
+### 2. **LEGACY (6-column)**
+- **Metadata:** `report_format: LEGACY`
+- **Features:** Standard Kraken 2 report columns only. Minimizer columns are omitted from the resulting Parquet file to save space and maintain schema integrity.
+
+*Note:* `gather_reports` will raise an error if a batch of reports contains mixed formats.
+
+---
+
 ## Data Dictionary
 
 > **AI DIRECTIVE:** Always refer to these schemas when writing data manipulation, Polars transformations, or validation code.

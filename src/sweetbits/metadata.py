@@ -16,17 +16,19 @@ def get_standard_metadata(
     source_path: Optional[Path] = None,
     compression: str = "None",
     sorting: str = "None",
-    data_standard: str = "GENERIC"
+    data_standard: str = "GENERIC",
+    report_format: str = "HYPERLOGLOG"
 ) -> Dict[str, str]:
     """
     Generates the standard metadata dictionary for SweetBITS parquet files.
 
     Args:
-        file_type: String identifier for the file schema (e.g., 'REPORT_PARQUET').
-        source_path: Absolute path to the original source of the data.
-        compression: Description of the compression used.
-        sorting: Description of the column sorting applied.
-        data_standard: Either 'SWEBITS' or 'GENERIC'.
+        file_type: String identifier for the file schema.
+        source_path: Absolute path to the original source.
+        compression: Compression description.
+        sorting: Column sorting description.
+        data_standard: 'SWEBITS' or 'GENERIC'.
+        report_format: 'HYPERLOGLOG' (8-col) or 'LEGACY' (6-col).
 
     Returns:
         A dictionary of metadata strings.
@@ -34,7 +36,6 @@ def get_standard_metadata(
     args = sys.argv[1:]
     command_str = " ".join(args)
     
-    # Identify the invocation command
     if not sys.argv[0].endswith("sweetbits"):
         invocation = f"python {sys.argv[0]} {command_str}".strip()
     else:
@@ -48,14 +49,13 @@ def get_standard_metadata(
         "compression": compression,
         "sorting": sorting,
         "source_path_abs": str(source_path.resolve()) if source_path else "Unknown",
-        "data_standard": data_standard
+        "data_standard": data_standard,
+        "report_format": report_format
     }
     return metadata
 
 def write_parquet_with_metadata(df: 'pl.DataFrame', output_path: Path, metadata: Dict[str, str], **kwargs):
-    """
-    Writes a Polars DataFrame to Parquet with custom file-level metadata.
-    """
+    """Writes a Polars DataFrame to Parquet with custom file-level metadata."""
     table = df.to_arrow()
     existing_meta = table.schema.metadata or {}
     merged_meta = {**existing_meta}
@@ -67,9 +67,7 @@ def write_parquet_with_metadata(df: 'pl.DataFrame', output_path: Path, metadata:
     pq.write_table(table, output_path, **kwargs)
 
 def read_parquet_metadata(file_path: Path) -> Dict[str, str]:
-    """
-    Reads the custom metadata from a Parquet file header.
-    """
+    """Reads the custom metadata from a Parquet file header."""
     schema = pq.read_schema(file_path)
     if not schema.metadata:
         return {}
