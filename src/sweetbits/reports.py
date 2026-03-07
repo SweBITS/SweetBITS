@@ -56,11 +56,11 @@ def gather_reports_logic(
 
     The process involves:
     1. Identifying files based on the include_pattern.
-    2. Extracting and validating Sample IDs from filenames.
-    3. Normalizing temporal metadata (Year/Week).
+    2. Detecting the data standard (SWEBITS vs GENERIC) based on filenames.
+    3. Normalizing temporal metadata if SWEBITS standard is detected.
     4. Vertically stacking all reports.
-    5. Sorting by temporal and taxonomic keys for optimized downstream access.
-    6. Injecting Arrow-level provenance metadata.
+    5. Sorting for optimized downstream access.
+    6. Injecting Arrow-level provenance metadata including 'data_standard'.
 
     Args:
         input_dir: Directory containing Kraken report files.
@@ -70,56 +70,74 @@ def gather_reports_logic(
 
     Raises:
         FileNotFoundError: If no files matching the pattern are found.
-        ValueError: If a Sample ID fails validation.
     """
-    # Find report files
     search_path = "**/" + include_pattern if recursive else include_pattern
     report_files = list(input_dir.glob(search_path))
     
     if not report_files:
         raise FileNotFoundError(f"No files matching '{include_pattern}' found in {input_dir}")
         
+    # 1. Determine Data Standard
+    is_swebits = True
+    parsed_metadata = []
+    
+    for f in report_files:
+        sample_id = f.name.split('.')[0]
+        try:
+            info = parse_sample_id(sample_id)
+            parsed_metadata.append(info)
+        except ValueError:
+            is_swebits = False
+            break
+            
+    data_standard = "SWEBITS" if is_swebits else "GENERIC"
+    
+    # 2. Process Files
     dfs = []
-    for file_path in report_files:
-        # Extract sample_id from filename (base name before all extensions)
+    for i, file_path in enumerate(report_files):
         sample_id = file_path.name.split('.')[0]
-        
-        # Validate and parse sample ID metadata
-        info = parse_sample_id(sample_id)
-        
-        # Parse the raw report
         df = parse_kraken_report(file_path)
         
-        # Add metadata columns for long-format tracking
-        df = df.with_columns([
-            pl.lit(sample_id).alias("sample_id"),
-            pl.lit(info["year"]).cast(pl.UInt16).alias("year"),
-            pl.lit(info["week"]).cast(pl.UInt8).alias("week"),
-            pl.lit(str(file_path.relative_to(input_dir))).alias("source_file")
-        ])
+        cols = {
+            "sample_id": pl.lit(sample_id),
+            "source_file": pl.lit(str(file_path.relative_to(input_dir)))
+        }
+        
+        if is_swebits:
+            info = parsed_metadata[i]
+            cols["year"] = pl.lit(info["year"]).cast(pl.UInt16)
+            cols["week"] = pl.lit(info["week"]).cast(pl.UInt8)
+            
+        df = df.with_columns(**cols)
         dfs.append(df)
         
-    # Vertical concatenation
     merged_df = pl.concat(dfs)
     
-    # Standardize column order
-    final_cols = [
-        "sample_id", "year", "week", "t_id", 
-        "clade_reads", "taxon_reads", "mm_tot", "mm_uniq", 
-        "source_file"
-    ]
+    # 3. Finalize Schema and Sort
+    if is_swebits:
+        final_cols = [
+            "sample_id", "year", "week", "t_id", 
+            "clade_reads", "taxon_reads", "mm_tot", "mm_uniq", 
+            "source_file"
+        ]
+        sorting = "year, week, sample_id, t_id"
+        merged_df = merged_df.select(final_cols).sort(["year", "week", "sample_id", "t_id"])
+    else:
+        final_cols = [
+            "sample_id", "t_id", 
+            "clade_reads", "taxon_reads", "mm_tot", "mm_uniq", 
+            "source_file"
+        ]
+        sorting = "sample_id, t_id"
+        merged_df = merged_df.select(final_cols).sort(["sample_id", "t_id"])
     
-    # Sort for high-performance range queries. Sorting by sample_id ensures 
-    # deterministic grouping and robustness for non-SweBITS data.
-    sorting = "year, week, sample_id, t_id"
-    merged_df = merged_df.select(final_cols).sort(["year", "week", "sample_id", "t_id"])
-    
-    # Save with zstd compression and extensive provenance metadata
+    # 4. Save with Metadata
     metadata = get_standard_metadata(
         file_type="REPORT_PARQUET", 
         source_path=input_dir,
         compression="zstd (level 3)",
-        sorting=sorting
+        sorting=sorting,
+        data_standard=data_standard
     )
     
     write_parquet_with_metadata(

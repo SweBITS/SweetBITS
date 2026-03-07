@@ -22,6 +22,28 @@ Reads are classified using a custom fork of Kraken 2 against a 3TB custom databa
 
 ---
 
+## Data Schema Profiles
+
+SweetBITS automatically detects and adapts to two distinct schema profiles based on the input data:
+
+### 1. **SWEBITS Profile**
+- **Trigger:** All input filenames match the SweBITS pattern (`Ki/Lj-YYYY_WW_ZZZ`).
+- **Metadata:** `data_standard: SWEBITS`
+- **Features:** 
+    - Includes `year` and `week` columns in Parquet files.
+    - `table` command defaults to grouping by `period` (`YYYY_WW`), automatically aggregating replicates.
+- **Sorting:** `[year, week, sample_id, t_id]`
+
+### 2. **GENERIC Profile**
+- **Trigger:** Any input filename does not match the SweBITS pattern.
+- **Metadata:** `data_standard: GENERIC`
+- **Features:**
+    - Only includes `sample_id` (drops `year` and `week`).
+    - `table` command defaults to raw `sample_id` as columns.
+- **Sorting:** `[sample_id, t_id]`
+
+---
+
 ## Data Dictionary
 
 > **AI DIRECTIVE:** Always refer to these schemas when writing data manipulation, Polars transformations, or validation code.
