@@ -126,7 +126,7 @@ Outputs abundance tables with `t_id` as the index and samples (YYYY_WW) as colum
 - **Arguments:**
   - `--mode`: `[taxon, clade, canonical]` (Default: `clade`)
   - `--output FILE`: Path to the output file (Supported: `.csv`, `.tsv`, `.parquet`). Format inferred from suffix.
-  - `--taxonomy DIR`: JolTax cache directory (Required for `--clade` or `canonical`).
+  - `--taxonomy DIR`: JolTax cache directory (Required for `canonical` mode or `--clade` filtering).
 - **Filters (Optional):**
   - `--exclude_samples FILE`: Text file, one ID per line. (Note: A warning is issued if any ID in this file is not found in the dataset).
   - `--min_observed INT`: Taxon must be in at least INT samples (default: 25).

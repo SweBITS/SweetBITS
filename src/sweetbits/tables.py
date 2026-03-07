@@ -88,7 +88,9 @@ def generate_table_logic(
 
     # 3. Load Taxonomy Tree if needed
     tree = None
-    if mode in ["clade", "canonical"] or clade_filter is not None:
+    # NOTE: clade mode does NOT require the tree because counts are pre-aggregated in reports.
+    # We only need the tree for 'canonical' mode or if a specific clade filter is requested.
+    if mode == "canonical" or clade_filter is not None:
         if not taxonomy_dir:
             raise ValueError(f"Taxonomy directory is required for mode '{mode}' or clade filtering.")
         tree = JolTree.load(str(taxonomy_dir))
