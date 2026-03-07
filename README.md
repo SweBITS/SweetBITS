@@ -19,6 +19,7 @@ pip install -e /home/daniel/devel/SweetBITS
 SweetBITS provides several high-performance tools for processing Kraken 2 outputs:
 
 - `gather-reports`: Merges multiple 8-column Kraken reports into a single, Polars-optimized Parquet file with full provenance metadata. Supports flexible SweBITS sample IDs (e.g., `Ki-2022_20_001`, `Lj_2013_1_142`, `Ki-2022-01-1`).
+    - *Automatic Data Standard:* Automatically detects and adapts to SweBITS or Generic datasets based on input filenames.
 - `table`: Generates wide-format abundance matrices. Supports three modes:
     - `taxon`: Direct taxonomic assignments.
     - `clade`: Cumulative clade counts (contains redundant counts).
