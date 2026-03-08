@@ -115,8 +115,10 @@ def convert_kraken_logic(
     # Log the conversion mode
     if has_fastq:
         click.secho("Mode: FAT Parquet (FASTQ sequences and quality scores included).", fg="cyan", err=True)
+        click.secho("Info: You can extract reads directly from this Parquet file using 'extract-reads'.", fg="cyan", err=True)
     else:
         click.secho("Mode: SKINNY Parquet (Taxonomic info only, sequences omitted).", fg="cyan", err=True)
+        click.secho("Info: The 'extract-reads' command will only output read ID lists for this file.", fg="cyan", err=True)
     
     # 2. Stream Initialization
     # We use independent OS-level decompression streams to avoid the Python GIL
