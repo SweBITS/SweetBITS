@@ -188,9 +188,8 @@ Outputs abundance tables with `t_id` as the index and samples (YYYY_WW) as colum
     - Corrects for "skipped ranks" and non-canonical assignments (e.g., `subgenus`).
     - The sum of all remainders in a sample exactly equals the total reads.
 
-#### `clr`
-Takes `<RAW_TABLE>` (from `table`) and calculates Centered Log Ratio using Bayesian multiplicative replacement for zeroes.
-> **AI DIRECTIVE:** Before implementing, ask the user how to handle taxa with extremely high proportions of zeroes.
+#### `coda` (Future)
+A planned suite of commands dedicated to Compositional Data Analysis (CoDA). This will likely include transformations like Centered Log Ratio (CLR) and robust zero-replacement strategies (e.g., Bayesian multiplicative replacement). For now, it is recommended to export the raw abundance tables and use specialized CoDA packages in R or Python (e.g., `skbio`).
 
 #### `extract_reads`
 Streams `<KRAKEN_PARQUET>` to extract reads into FASTQ format with high throughput and a constant memory profile.
@@ -295,4 +294,5 @@ All SweetBITS tools that read `<KRAKEN_PARQUET>` or `<REPORT_PARQUET>` files mus
 5. [x] Implement `inspect` for metadata viewing.
 6. [x] Implement `annotate_table` for taxonomic annotation and sorting.
 7. [x] Implement Parquet version compatibility checking.
-8. [ ] TBD...
+8. [ ] Implement `convert_kraken` (Ingestion from raw Kraken/FASTQ).
+9. [ ] Future: `coda` command suite for Compositional Data Analysis.
