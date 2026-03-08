@@ -17,7 +17,15 @@ from sweetbits.utils import parse_sample_id
 from sweetbits.metadata import get_standard_metadata
 
 def _open_text_stream(path: Path):
-    """Opens a text stream, using gzip subprocess if necessary for performance."""
+    """
+    Opens a text stream, using an OS-level gzip subprocess if necessary for maximum performance.
+
+    Args:
+        path : Path to the file to open (supports .gz).
+
+    Returns:
+        A tuple of (stream, process). If the file is not gzipped, process will be None.
+    """
     if path.suffix == ".gz":
         # Bypass Python GIL and use OS-level decompression
         proc = subprocess.Popen(["gzip", "-dc", str(path)], stdout=subprocess.PIPE, text=True, bufsize=1024*1024)
@@ -27,7 +35,17 @@ def _open_text_stream(path: Path):
         return f, None
 
 def _fastq_iterator(f_stream) -> Iterator[Tuple[str, str, str]]:
-    """Yields (read_id, seq, qual) from a FASTQ stream."""
+    """
+    Yields parsed records from a FASTQ stream.
+
+    Args:
+        f_stream : An active text iterator reading a FASTQ file.
+
+    Yields:
+        A tuple containing (read_id, sequence, quality_string). 
+        The read_id is stripped of its leading '@' and any pair suffixes 
+        (e.g., '/1' or '/2') to match the Kraken output format.
+    """
     try:
         while True:
             header = next(f_stream)
@@ -59,11 +77,30 @@ def convert_kraken_logic(
     
     Uses a memory-safe two-pointer streaming algorithm for the Left Join, followed
     by an out-of-core Rust/Polars sort phase.
+
+    Args:
+        kraken_file : Path to the Kraken read-by-read output (.txt or .gz).
+        output_file : Path where the final Parquet will be saved.
+        r1_file     : Optional path to the R1 FASTQ file (.fastq or .gz).
+        r2_file     : Optional path to the R2 FASTQ file (.fastq or .gz).
+        no_fastq    : If True, completely ignores sequences to create a Skinny Parquet.
+        cores       : Number of threads to assign to Polars for out-of-core sorting.
+
+    Returns:
+        A dictionary containing processing statistics:
+        - 'records_processed': Number of reads parsed.
+        - 'has_fastq'        : Boolean flag if sequence data is included.
+        - 'data_standard'    : The standard (SWEBITS/GENERIC) applied to the file.
+        - 'output_file'      : Path to the generated Parquet file.
+
+    Raises:
+        RuntimeError : If the FASTQ files are fundamentally out of sync with the Kraken file.
     """
     if cores:
         os.environ["POLARS_MAX_THREADS"] = str(cores)
         
-    # Determine sample ID and standard
+    # 1. Determine Data Standard
+    # Check if the filename matches SweBITS patterns to inject temporal columns
     sample_id_guess = kraken_file.name.split('.')[0]
     try:
         info = parse_sample_id(sample_id_guess)
@@ -77,7 +114,8 @@ def convert_kraken_logic(
 
     has_fastq = False if no_fastq else (r1_file is not None)
     
-    # Setup Streams
+    # 2. Stream Initialization
+    # We use independent OS-level decompression streams to avoid the Python GIL
     k_stream, k_proc = _open_text_stream(kraken_file)
     r1_stream, r1_proc, r2_stream, r2_proc = None, None, None, None
     r1_iter, r2_iter = None, None
@@ -95,6 +133,8 @@ def convert_kraken_logic(
     CHUNK_SIZE = 500_000
     records_processed = 0
     
+    # 3. Schema Definition
+    # We strictly enforce datatypes at ingestion to minimize disk footprint
     schema_fields = [
         ("sample_id", pa.string()),
         ("read_id", pa.string()),
@@ -123,6 +163,9 @@ def convert_kraken_logic(
         tmp_unsorted = Path(tmpdir) / "unsorted.parquet"
         writer = pq.ParquetWriter(tmp_unsorted, schema, compression='NONE')
         
+        # 4. Two-Pointer Streaming Logic
+        # The Kraken file acts as the absolute source of truth. If a FASTQ read is missing 
+        # (e.g., host depletion), we insert nulls but keep the taxonomic classification.
         try:
             while True:
                 chunk_data = {f[0]: [] for f in schema_fields}
@@ -136,10 +179,7 @@ def convert_kraken_logic(
                     lines_read += 1
                     parts = line.rstrip('\n').split('\t')
                     
-                    # Kraken 6-col (with MHG) or 8-col format parsing
-                    # Our schema expects: Class, read_id, t_id, len(s), mhg, kmer
-                    # Wait, standard Kraken is: Class, ID, t_id, len, LCA_kmer
-                    # If SweBITS format has MHG as col 5 and kmer as col 6
+                    # Parse SweBITS/Kraken read-by-read format
                     read_id = parts[1]
                     t_id = int(parts[2])
                     
@@ -172,6 +212,7 @@ def convert_kraken_logic(
                         r1_s, r1_q = None, None
                         r2_s, r2_q = None, None
                         
+                        # Left Join: Match FASTQ sequences if IDs align perfectly
                         if curr_r1 and curr_r1[0] == read_id:
                             _, r1_s, r1_q = curr_r1
                             try:
@@ -208,20 +249,22 @@ def convert_kraken_logic(
             if r2_stream: r2_stream.close()
             if r2_proc: r2_proc.wait()
 
-        # Synchronicity Audit
+        # 5. Synchronicity Audit
+        # If the Kraken file is exhausted but FASTQ files still have reads, 
+        # the pipelines drifted out of sync upstream.
         if has_fastq and (curr_r1 is not None or curr_r2 is not None):
             raise RuntimeError(
                 "FASTQ files are out of sync with the Kraken report or contain reads "
                 "not present in the Kraken output. Ensure downstream tools preserved read order."
             )
 
-        # Phase 2: Sort (Out-of-Core)
+        # 6. Phase 2: Sort (Out-of-Core)
+        # Sort by TaxID to maximize Run-Length Encoding (RLE) during Parquet zstd compression
         tmp_sorted = Path(tmpdir) / "sorted.parquet"
         lf = pl.scan_parquet(tmp_unsorted).sort("t_id")
-        # Sink it uncompressed to save CPU time before the final PyArrow pass
         lf.sink_parquet(tmp_sorted, compression="uncompressed")
         
-        # Phase 3: Metadata Injection & Compression
+        # 7. Phase 3: Metadata Injection & Final Compression
         meta = get_standard_metadata(
             file_type="KRAKEN_PARQUET",
             source_path=kraken_file,
@@ -234,7 +277,6 @@ def convert_kraken_logic(
         
         sorted_pf = pq.ParquetFile(tmp_sorted)
         
-        # Inject metadata into Arrow schema
         existing_meta = sorted_pf.schema_arrow.metadata or {}
         merged_meta = {**existing_meta}
         for k, v in meta.items():

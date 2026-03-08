@@ -117,7 +117,7 @@ sweetbits convert-kraken sample.kraken \
     --r2 sample_R2.fastq.gz \
     --output sample.kraken.parquet
 
-# High-performance Skinny Parquet (drops sequences, saves 90% space)
+# High-performance Skinny Parquet (drops sequences, saves significant disk space)
 # Highly recommended for standard workflows.
 sweetbits convert-kraken sample.kraken \
     --no-fastq \
