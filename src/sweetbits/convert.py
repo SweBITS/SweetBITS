@@ -186,7 +186,7 @@ def convert_kraken_logic(
         # The Kraken file acts as the absolute source of truth. If a FASTQ read is missing 
         # (e.g., host depletion), we insert nulls but keep the taxonomic classification.
         click.secho("Phase 1/3: Ingesting data and synchronizing streams...", fg="cyan", err=True)
-        fill_char = click.style('#', fg='cyan')
+        fill_char = click.style('#', fg='yellow')
         try:
             label = click.style("Reading", fg="cyan")
             with click.progressbar(length=None, label=label, show_pos=True, color="cyan", fill_char=fill_char) as bar:
