@@ -275,7 +275,7 @@ def annotate(input_table, taxonomy, output, metadata, cores, overwrite):
         click.secho(f"Error: {str(e)}", fg="red", err=True)
         sys.exit(1)
 
-@main.command(name="inspect", short_help="Show metadata of a SweetBITS Parquet file.")
+@main.command(name="inspect", short_help="Show metadata of a SweetBITS parquet file.")
 @click.argument("parquet_file", type=click.Path(exists=True, path_type=Path))
 def inspect(parquet_file):
     """
@@ -288,11 +288,11 @@ def inspect(parquet_file):
         if not metadata:
             click.echo("No SweetBITS metadata found in this file.")
             return
-            
-        click.secho(f"File: {parquet_file.name}", fg="cyan", bold=True)
-        click.echo("-" * 60)
+
+        click.echo(click.style("Inspecting: ", fg="cyan") + click.style(parquet_file.name, fg="cyan", bold=True))
+        click.echo("-" * 55)
         for key, value in metadata.items():
-            display_key = key.replace("_", " ").title()
+            display_key = key.replace("_", " ").title().replace("Sweetbits", "SweetBITS")
             click.echo(f"{display_key:20}: {value}")
     except Exception as e:
         click.secho(f"Error reading metadata: {str(e)}", fg="red", err=True)
