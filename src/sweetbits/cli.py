@@ -104,7 +104,8 @@ def gather_reports(directory, output, recursive, include):
 @click.option("--keep-unclassified", is_flag=True, help="Keep TaxID 0 (unclassified).")
 @click.option("--proportions", is_flag=True, help="Output relative proportions instead of raw reads.")
 @click.option("--keep-composition", is_flag=True, help="Retain filtered reads as 'Filtered classified' to preserve global total reads. Forces --keep-unclassified.")
-def table(input_parquet, output, mode, taxonomy, exclude_samples, min_observed, min_reads, clade, keep_unclassified, proportions, keep_composition):
+@click.option("--cores", type=int, help="Number of CPU cores to use (Default: all available).")
+def table(input_parquet, output, mode, taxonomy, exclude_samples, min_observed, min_reads, clade, keep_unclassified, proportions, keep_composition, cores):
     """
     Outputs abundance tables with TaxIDs as rows and samples (YYYY_WW) as columns.
     Supports filtering by clade, minimum occupancy, and read depth.
@@ -129,7 +130,8 @@ def table(input_parquet, output, mode, taxonomy, exclude_samples, min_observed, 
             clade_filter=clade,
             keep_unclassified=keep_unclassified,
             proportions=proportions,
-            keep_composition=keep_composition
+            keep_composition=keep_composition,
+            cores=cores
         )
         summary["status"] = "Success"
         print_footer(start_time, summary)
@@ -148,35 +150,37 @@ def table(input_parquet, output, mode, taxonomy, exclude_samples, min_observed, 
 @click.option("--week-start", type=int, help="Start week for temporal filtering.")
 @click.option("--year-end", type=int, help="End year for temporal filtering.")
 @click.option("--week-end", type=int, help="End week for temporal filtering.")
-def extract_reads(input_path, taxonomy, tax_id, output_dir, mode, combine_samples, year_start, week_start, year_end, week_end):
+@click.option("--cores", type=int, help="Number of CPU cores to use (Default: all available).")
+def extract_reads(input_path, taxonomy, tax_id, output_dir, mode, combine_samples, year_start, week_start, year_end, week_end, cores):
     """
-    Streams KRAKEN_PARQUET files and extracts reads into FASTQ format based on 
-    TaxID, mode, and temporal window.
+    Extracts reads from Kraken-annotated Parquet files into FASTQ or text format.
     """
     start_time = time.time()
     ctx = click.get_current_context()
     print_header(ctx)
     print_parameters(ctx.params)
-    
-    # Parse tax_ids
+
+    # Parse tax_id list
     try:
-        tids = [int(tid.strip()) for tid in tax_id.split(",")]
+        t_ids = [int(tid.strip()) for tid in tax_id.split(",")]
     except ValueError:
         click.secho("Error: --tax-id must be a comma-separated list of integers.", fg="red", err=True)
         sys.exit(1)
-        
+
     try:
         summary = extract_reads_logic(
             input_path=input_path,
             taxonomy_dir=taxonomy,
-            tax_ids=tids,
+            tax_ids=t_ids,
             output_dir=output_dir,
             mode=mode,
             combine_samples=combine_samples,
             year_start=year_start,
             week_start=week_start,
             year_end=year_end,
-            week_end=week_end
+            week_end=week_end,
+            cores=cores
+        )
         )
         summary["status"] = "Success"
         print_footer(start_time, summary)
@@ -189,7 +193,8 @@ def extract_reads(input_path, taxonomy, tax_id, output_dir, mode, combine_sample
 @click.option("--taxonomy", "-t", type=click.Path(exists=True, path_type=Path), required=True, help="JolTax cache directory.")
 @click.option("--output", "-o", type=click.Path(path_type=Path), required=True, help="Path to output file (.csv, .tsv, .parquet).")
 @click.option("--metadata", "-m", type=click.Path(exists=True, path_type=Path), multiple=True, help="Path to external metadata files (can be used multiple times).")
-def annotate_table(input_table, taxonomy, output, metadata):
+@click.option("--cores", type=int, help="Number of CPU cores to use (Default: all available).")
+def annotate_table(input_table, taxonomy, output, metadata, cores):
     """
     Annotates a numeric <RAW_TABLE> with full taxonomic lineages and sorts
     the rows hierarchically. Also computes summary abundance statistics and
@@ -205,7 +210,8 @@ def annotate_table(input_table, taxonomy, output, metadata):
             input_table=input_table,
             taxonomy_dir=taxonomy,
             output_file=output,
-            metadata_files=list(metadata) if metadata else []
+            metadata_files=list(metadata) if metadata else [],
+            cores=cores
         )
         summary["status"] = "Success"
         print_footer(start_time, summary)

@@ -110,7 +110,8 @@ def extract_reads_logic(
     year_start: Optional[int] = None,
     week_start: Optional[int] = None,
     year_end: Optional[int] = None,
-    week_end: Optional[int] = None
+    week_end: Optional[int] = None,
+    cores: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Streams KRAKEN_PARQUET files and extracts reads into FASTQ or text format.
@@ -126,11 +127,16 @@ def extract_reads_logic(
         week_start      : Optional start week for filtering.
         year_end        : Optional end year for filtering.
         week_end        : Optional end week for filtering.
+        cores           : Number of CPU cores to use for Polars operations.
 
     Returns:
         A dictionary containing extraction statistics.
     """
     # 1. Setup
+    if cores:
+        import os
+        os.environ["POLARS_MAX_THREADS"] = str(cores)
+
     tree = JolTree.load(str(taxonomy_dir))
     output_dir.mkdir(parents=True, exist_ok=True)
     

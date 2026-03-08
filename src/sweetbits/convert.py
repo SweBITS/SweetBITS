@@ -132,11 +132,21 @@ def convert_kraken_logic(
         r2_stream, r2_proc = _open_text_stream(r2_file)
         r2_iter = _fastq_iterator(r2_stream)
 
-    curr_r1 = next(r1_iter) if r1_iter else None
-    curr_r2 = next(r2_iter) if r2_iter else None
+    curr_r1 = None
+    curr_r2 = None
+    if has_fastq:
+        try:
+            curr_r1 = next(r1_iter)
+            curr_r2 = next(r2_iter)
+        except StopIteration:
+            pass
 
     CHUNK_SIZE = 500_000
     records_processed = 0
+    matched_fastq_count = 0
+    last_matched_id = "None"
+    
+    # ... rest of setup ...
     
     # 3. Schema Definition
     # We strictly enforce datatypes at ingestion to minimize disk footprint
@@ -224,13 +234,16 @@ def convert_kraken_logic(
                                 curr_r1 = next(r1_iter)
                             except StopIteration:
                                 curr_r1 = None
-                                
-                        if curr_r2 and curr_r2[0] == read_id:
-                            _, r2_s, r2_q = curr_r2
-                            try:
-                                curr_r2 = next(r2_iter)
-                            except StopIteration:
-                                curr_r2 = None
+                            
+                            if curr_r2 and curr_r2[0] == read_id:
+                                _, r2_s, r2_q = curr_r2
+                                try:
+                                    curr_r2 = next(r2_iter)
+                                except StopIteration:
+                                    curr_r2 = None
+                            
+                            matched_fastq_count += 1
+                            last_matched_id = read_id
                                 
                         chunk_data["r1_seq"].append(r1_s)
                         chunk_data["r1_qual"].append(r1_q)
@@ -258,10 +271,17 @@ def convert_kraken_logic(
         # If the Kraken file is exhausted but FASTQ files still have reads, 
         # the pipelines drifted out of sync upstream.
         if has_fastq and (curr_r1 is not None or curr_r2 is not None):
-            raise RuntimeError(
-                "FASTQ files are out of sync with the Kraken report or contain reads "
-                "not present in the Kraken output. Ensure downstream tools preserved read order."
+            msg = (
+                "FASTQ files are out of sync with the Kraken report or contain extra reads. "
+                f"Total Kraken reads processed: {records_processed}. "
+                f"FASTQ reads successfully matched: {matched_fastq_count}. "
+                f"Last matched Read ID: '{last_matched_id}'. "
             )
+            if curr_r1:
+                msg += f"First unmatched FASTQ ID: '{curr_r1[0]}'. "
+            
+            msg += "Ensure downstream tools (depletion/cleaning) preserved read order and did not add new reads."
+            raise RuntimeError(msg)
 
         # 6. Phase 2: Sort (Out-of-Core)
         # Sort by TaxID to maximize Run-Length Encoding (RLE) during Parquet zstd compression

@@ -18,7 +18,8 @@ def annotate_table_logic(
     input_table: Path,
     taxonomy_dir: Path,
     output_file: Path,
-    metadata_files: Optional[List[Path]] = None
+    metadata_files: Optional[List[Path]] = None,
+    cores: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Annotates a raw abundance table with taxonomic lineages and external metadata.
@@ -32,6 +33,7 @@ def annotate_table_logic(
         taxonomy_dir   : Path to the JolTax cache directory.
         output_file    : Path where the annotated table will be saved.
         metadata_files : Optional list of paths to external metadata files to join.
+        cores          : Number of CPU cores to use for Polars operations.
 
     Returns:
         A dictionary containing processing statistics:
@@ -43,6 +45,10 @@ def annotate_table_logic(
     """
     if metadata_files is None:
         metadata_files = []
+
+    if cores:
+        import os
+        os.environ["POLARS_MAX_THREADS"] = str(cores)
 
     # 1. Load Base Table
     ext = input_table.suffix.lower()

@@ -29,7 +29,8 @@ def generate_table_logic(
     clade_filter: Optional[int] = None,
     keep_unclassified: bool = False,
     proportions: bool = False,
-    keep_composition: bool = False
+    keep_composition: bool = False,
+    cores: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Generates a wide-format abundance table from a merged REPORT_PARQUET file.
@@ -58,6 +59,7 @@ def generate_table_logic(
         keep_composition  : If True (taxon/canonical modes only), retains filtered reads in a 
                             synthetic 'Filtered classified' bin to preserve the global read total
                             for accurate relative abundance calculations.
+        cores             : Number of CPU cores to use for Polars operations.
 
     Returns:
         A dictionary containing processing statistics:
@@ -71,6 +73,10 @@ def generate_table_logic(
                             keep_composition is used with an incompatible mode.
         FileNotFoundError : If the input file does not exist.
     """
+    if cores:
+        import os
+        os.environ["POLARS_MAX_THREADS"] = str(cores)
+
     # 1. Validate Parquet and Read Metadata
     required_cols = ["sample_id", "t_id", "clade_reads", "taxon_reads"]
     metadata = validate_sweetbits_parquet(input_parquet, expected_type="REPORT_PARQUET", required_columns=required_cols)
