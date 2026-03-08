@@ -111,7 +111,7 @@ Sorted by `year`, `week`, `sample_id`, and `t_id`. Compressed with `zstd`.
 
 | Column | Type | Description |
 | :--- | :--- | :--- |
-| `sample_id` | String | The sample ID |
+| `sample_id` | Categorical | The sample ID |
 | `year` | UInt16 | The ISO year of the sample |
 | `week` | UInt8 | The ISO week of the sample |
 | `t_id` | UInt32 | The classified TaxID |
@@ -119,7 +119,8 @@ Sorted by `year`, `week`, `sample_id`, and `t_id`. Compressed with `zstd`.
 | `taxon_reads` | UInt32 | Reads assigned directly to this taxon |
 | `mm_tot` | UInt64 | Total minimizer matches (includes duplicates) |
 | `mm_uniq` | UInt32 | Estimated distinct minimizer matches |
-| `source_file` | String | Path to the original Kraken report file (relative to input) |
+| `source_file` | Categorical | Path to the original Kraken report file (relative to input) |
+
 
 ---
 

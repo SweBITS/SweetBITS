@@ -4,6 +4,7 @@ Logic for parsing and merging Kraken 2 report files with automatic format detect
 """
 
 import polars as pl
+import click
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Any
 from sweetbits.utils import parse_sample_id, get_sample_info
@@ -152,29 +153,36 @@ def gather_reports_logic(
     is_swebits = all(m["data_standard"] == "SWEBITS" for m in sample_metadata)
     data_standard = "SWEBITS" if is_swebits else "GENERIC"
 
+    click.secho(f"Found {len(report_files)} Kraken reports. Collecting...", fg="cyan", err=True)
+
     # 3. Process and Stack Files
     dfs = []
-    for i, file_path in enumerate(report_files):
-        info = sample_metadata[i]
-        sample_id = info["sample_id"]
-        df = parse_kraken_report(file_path, report_format)
+    # Use StringCache to ensure Categorical consistency during concat
+    with pl.StringCache():
+        with click.progressbar(report_files, label="Merging reports", show_pos=True) as bar:
+            for i, file_path in enumerate(bar):
+                info = sample_metadata[i]
+                sample_id = info["sample_id"]
+                df = parse_kraken_report(file_path, report_format)
 
-        cols = {
-            "sample_id": pl.lit(sample_id),
-            "source_file": pl.lit(str(file_path.relative_to(input_dir)))
-        }
+                cols = {
+                    "sample_id": pl.lit(sample_id).cast(pl.Categorical),
+                    "source_file": pl.lit(str(file_path.relative_to(input_dir))).cast(pl.Categorical)
+                }
 
-        if is_swebits:
-            cols["year"] = pl.lit(info["year"]).cast(pl.UInt16)
-            cols["week"] = pl.lit(info["week"]).cast(pl.UInt8)
+                if is_swebits:
+                    cols["year"] = pl.lit(info["year"]).cast(pl.UInt16)
+                    cols["week"] = pl.lit(info["week"]).cast(pl.UInt8)
 
-        df = df.with_columns(**cols)
-        dfs.append(df)
+                df = df.with_columns(**cols)
+                dfs.append(df)
         
-    merged_df = pl.concat(dfs)
+        merged_df = pl.concat(dfs)
     
     # 4. Finalize Schema and Sort
     sort_keys = ["year", "week", "sample_id", "t_id"] if is_swebits else ["sample_id", "t_id"]
+    
+    click.secho(f"Sorting {merged_df.height:,} rows...", fg="cyan", err=True)
     merged_df = merged_df.sort(sort_keys)
     
     # 5. Save with Metadata
@@ -187,6 +195,7 @@ def gather_reports_logic(
         report_format=report_format
     )
     
+    click.secho(f"Writing to {output_file.name}...", fg="cyan", err=True)
     write_parquet_with_metadata(
         merged_df, 
         output_file, 
