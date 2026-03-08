@@ -78,7 +78,6 @@ CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 @click.group(context_settings=CONTEXT_SETTINGS, invoke_without_command=True)
 @click.pass_context
 def main(ctx):
-    """(Bioinformatics tools for the SweBITS project)"""
     if ctx.invoked_subcommand is None:
         print_splash()
         click.echo(ctx.get_help())
