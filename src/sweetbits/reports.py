@@ -159,32 +159,30 @@ def gather_reports_logic(
     # 3. Process and Stack Files
     dfs = []
     
-    # We keep strings during loop and cast to Categorical after concat for better performance.
     fill_char = click.style('#', fg='cyan')
-    with click.progressbar(report_files, label="Merging reports", show_pos=True, color="cyan", fill_char=fill_char) as bar:
-        for i, file_path in enumerate(bar):
-            info = sample_metadata[i]
-            sample_id = info["sample_id"]
-            df = parse_kraken_report(file_path, report_format)
-
-            cols = {
-                "sample_id": pl.lit(sample_id),
-                "source_file": pl.lit(str(file_path.relative_to(input_dir)))
-            }
-
-            if is_swebits:
-                cols["year"] = pl.lit(info["year"]).cast(pl.UInt16)
-                cols["week"] = pl.lit(info["week"]).cast(pl.UInt8)
-
-            df = df.with_columns(**cols)
-            dfs.append(df)
-            
+    label = click.style("Merging reports", fg="cyan")
+    
+    # Use StringCache to ensure Categorical consistency during concat
     with pl.StringCache():
+        with click.progressbar(report_files, label=label, show_pos=True, color="cyan", fill_char=fill_char) as bar:
+            for i, file_path in enumerate(bar):
+                info = sample_metadata[i]
+                sample_id = info["sample_id"]
+                df = parse_kraken_report(file_path, report_format)
+
+                cols = {
+                    "sample_id": pl.lit(sample_id).cast(pl.Categorical),
+                    "source_file": pl.lit(str(file_path.relative_to(input_dir))).cast(pl.Categorical)
+                }
+
+                if is_swebits:
+                    cols["year"] = pl.lit(info["year"]).cast(pl.UInt16)
+                    cols["week"] = pl.lit(info["week"]).cast(pl.UInt8)
+
+                df = df.with_columns(**cols)
+                dfs.append(df)
+            
         merged_df = pl.concat(dfs)
-        merged_df = merged_df.with_columns([
-            pl.col("sample_id").cast(pl.Categorical),
-            pl.col("source_file").cast(pl.Categorical)
-        ])
     
     # 4. Finalize Schema and Sort
     sort_keys = ["year", "week", "sample_id", "t_id"] if is_swebits else ["sample_id", "t_id"]

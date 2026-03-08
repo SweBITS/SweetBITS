@@ -188,7 +188,8 @@ def convert_kraken_logic(
         click.secho("Phase 1/3: Ingesting data and synchronizing streams...", fg="cyan", err=True)
         fill_char = click.style('#', fg='cyan')
         try:
-            with click.progressbar(length=None, label="Reading", show_pos=True, color="cyan", fill_char=fill_char) as bar:
+            label = click.style("Reading", fg="cyan")
+            with click.progressbar(length=None, label=label, show_pos=True, color="cyan", fill_char=fill_char) as bar:
                 while True:
                     chunk_data = {f[0]: [] for f in schema_fields}
                     lines_read = 0
