@@ -250,7 +250,7 @@ def extract_reads_logic(
                 if year_start: lf = lf.filter(pl.col("year") >= year_start)
                 if year_end:   lf = lf.filter(pl.col("year") <= year_end)
             
-            df = lf.collect(streaming=True)
+            df = lf.collect(engine="streaming")
             if df.is_empty():
                 continue
                 
