@@ -36,7 +36,8 @@ def generate_table_logic(
 
     This function automatically detects the 'data_standard' from the input file's
     metadata to decide how to format columns (YYYY_WW vs Sample ID). It supports
-    filtering by clade, sample exclusion, and quality thresholds.
+    filtering by clade, sample exclusion, quality thresholds, and composition
+    preservation.
 
     Args:
         input_parquet     : Path to the merged REPORT_PARQUET file.
@@ -53,6 +54,10 @@ def generate_table_logic(
         min_reads         : Minimum maximum read count across all samples for a taxon.
         clade_filter      : Optional TaxID to restrict output to a specific clade.
         keep_unclassified : Whether to include TaxID 0 in the output.
+        proportions       : If True, outputs relative proportions instead of raw read counts.
+        keep_composition  : If True (taxon/canonical modes only), retains filtered reads in a 
+                            synthetic 'Filtered classified' bin to preserve the global read total
+                            for accurate relative abundance calculations.
 
     Returns:
         A dictionary containing processing statistics:
@@ -62,7 +67,8 @@ def generate_table_logic(
         - 'output_file'    : Path to the saved result.
 
     Raises:
-        ValueError        : If required parameters are missing for the selected mode.
+        ValueError        : If required parameters are missing for the selected mode, or if 
+                            keep_composition is used with an incompatible mode.
         FileNotFoundError : If the input file does not exist.
     """
     # 1. Validate Parquet and Read Metadata
