@@ -121,10 +121,10 @@ def convert_kraken_logic(
     # Log the conversion mode
     if has_fastq:
         click.secho("Mode: FAT Parquet (FASTQ sequences and quality scores included).", fg="cyan", err=True)
-        click.secho("Info: You can extract reads directly from this Parquet file using 'extract-reads'.", fg="cyan", err=True)
+        click.secho("Info: You can extract reads directly from this Parquet file using 'produce reads'.", fg="cyan", err=True)
     else:
         click.secho("Mode: SKINNY Parquet (Taxonomic info only, sequences omitted).", fg="cyan", err=True)
-        click.secho("Info: The 'extract-reads' command will only output read ID lists for this file.", fg="cyan", err=True)
+        click.secho("Info: The 'produce reads' command will only output read ID lists for this file.", fg="cyan", err=True)
     
     # 2. Stream Initialization
     # We use independent OS-level decompression streams to avoid the Python GIL
@@ -186,89 +186,89 @@ def convert_kraken_logic(
         # The Kraken file acts as the absolute source of truth. If a FASTQ read is missing 
         # (e.g., host depletion), we insert nulls but keep the taxonomic classification.
         click.secho("Phase 1/3: Ingesting data and synchronizing streams...", fg="cyan", err=True)
-        fill_char = click.style('#', fg='yellow')
         try:
-            label = click.style("Reading", fg="cyan")
-            with click.progressbar(length=None, label=label, show_pos=True, color="cyan", fill_char=fill_char) as bar:
-                while True:
-                    chunk_data = {f[0]: [] for f in schema_fields}
-                    lines_read = 0
-                    
-                    while lines_read < CHUNK_SIZE:
-                        line = k_stream.readline()
-                        if not line:
-                            break
-                            
-                        lines_read += 1
-                        parts = line.rstrip('\n').split('\t')
-                        
-                        # Parse SweBITS/Kraken read-by-read format
-                        read_id = parts[1]
-                        t_id = int(parts[2])
-                        
-                        lens = parts[3].split('|')
-                        r1_len = int(lens[0])
-                        r2_len = int(lens[1]) if len(lens) > 1 else 0
-                        total_len = r1_len + r2_len
-                        
-                        try:
-                            mhg = int(parts[4])
-                        except (IndexError, ValueError):
-                            mhg = 0
-                            
-                        kmer_string = parts[5] if len(parts) > 5 else ""
-                        
-                        chunk_data["sample_id"].append(sample_id)
-                        chunk_data["read_id"].append(read_id)
-                        chunk_data["t_id"].append(t_id)
-                        chunk_data["mhg"].append(mhg)
-                        chunk_data["r1_len"].append(r1_len)
-                        chunk_data["r2_len"].append(r2_len)
-                        chunk_data["total_len"].append(total_len)
-                        chunk_data["kmer_string"].append(kmer_string)
-                        
-                        if data_standard == "SWEBITS":
-                            chunk_data["year"].append(year)
-                            chunk_data["week"].append(week)
-                            
-                        if has_fastq:
-                            r1_s, r1_q = None, None
-                            r2_s, r2_q = None, None
-                            
-                            # Left Join: Match FASTQ sequences if IDs align perfectly
-                            if curr_r1 and curr_r1[0] == read_id:
-                                _, r1_s, r1_q = curr_r1
-                                try:
-                                    curr_r1 = next(r1_iter)
-                                except StopIteration:
-                                    curr_r1 = None
-                                
-                                if curr_r2 and curr_r2[0] == read_id:
-                                    _, r2_s, r2_q = curr_r2
-                                    try:
-                                        curr_r2 = next(r2_iter)
-                                    except StopIteration:
-                                        curr_r2 = None
-                                
-                                matched_fastq_count += 1
-                                last_matched_id = read_id
-                                    
-                            chunk_data["r1_seq"].append(r1_s)
-                            chunk_data["r1_qual"].append(r1_q)
-                            chunk_data["r2_seq"].append(r2_s)
-                            chunk_data["r2_qual"].append(r2_q)
-                            
-                        records_processed += 1
-                    
-                    if lines_read == 0:
+            while True:
+                chunk_data = {f[0]: [] for f in schema_fields}
+                lines_read = 0
+                
+                while lines_read < CHUNK_SIZE:
+                    line = k_stream.readline()
+                    if not line:
                         break
                         
-                    # Dictionary encode sample_id before creating table to match schema
-                    chunk_data["sample_id"] = pa.array(chunk_data["sample_id"]).dictionary_encode()
+                    lines_read += 1
+                    parts = line.rstrip('\n').split('\t')
                     
-                    table = pa.Table.from_pydict(chunk_data, schema=schema)
-                    writer.write_table(table)
-                    bar.update(lines_read)
+                    # Parse SweBITS/Kraken read-by-read format
+                    read_id = parts[1]
+                    t_id = int(parts[2])
+                    
+                    lens = parts[3].split('|')
+                    r1_len = int(lens[0])
+                    r2_len = int(lens[1]) if len(lens) > 1 else 0
+                    total_len = r1_len + r2_len
+                    
+                    try:
+                        mhg = int(parts[4])
+                    except (IndexError, ValueError):
+                        mhg = 0
+                        
+                    kmer_string = parts[5] if len(parts) > 5 else ""
+                    
+                    chunk_data["sample_id"].append(sample_id)
+                    chunk_data["read_id"].append(read_id)
+                    chunk_data["t_id"].append(t_id)
+                    chunk_data["mhg"].append(mhg)
+                    chunk_data["r1_len"].append(r1_len)
+                    chunk_data["r2_len"].append(r2_len)
+                    chunk_data["total_len"].append(total_len)
+                    chunk_data["kmer_string"].append(kmer_string)
+                    
+                    if data_standard == "SWEBITS":
+                        chunk_data["year"].append(year)
+                        chunk_data["week"].append(week)
+                        
+                    if has_fastq:
+                        r1_s, r1_q = None, None
+                        r2_s, r2_q = None, None
+                        
+                        # Left Join: Match FASTQ sequences if IDs align perfectly
+                        if curr_r1 and curr_r1[0] == read_id:
+                            _, r1_s, r1_q = curr_r1
+                            try:
+                                curr_r1 = next(r1_iter)
+                            except StopIteration:
+                                curr_r1 = None
+                            
+                            if curr_r2 and curr_r2[0] == read_id:
+                                _, r2_s, r2_q = curr_r2
+                                try:
+                                    curr_r2 = next(r2_iter)
+                                except StopIteration:
+                                    curr_r2 = None
+                            
+                            matched_fastq_count += 1
+                            last_matched_id = read_id
+                                
+                        chunk_data["r1_seq"].append(r1_s)
+                        chunk_data["r1_qual"].append(r1_q)
+                        chunk_data["r2_seq"].append(r2_s)
+                        chunk_data["r2_qual"].append(r2_q)
+                        
+                    records_processed += 1
+                
+                if lines_read == 0:
+                    break
+                    
+                # Dictionary encode sample_id before creating table to match schema
+                chunk_data["sample_id"] = pa.array(chunk_data["sample_id"]).dictionary_encode()
+                
+                table = pa.Table.from_pydict(chunk_data, schema=schema)
+                writer.write_table(table)
+                
+                # Provide periodic feedback
+                if records_processed % 1_000_000 == 0 or records_processed < 1_000_000:
+                    click.secho(f"  Processed {records_processed:,} reads...", fg="bright_black", err=True)
                 
         finally:
             writer.close()
