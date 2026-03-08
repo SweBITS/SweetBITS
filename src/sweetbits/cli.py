@@ -181,7 +181,6 @@ def extract_reads(input_path, taxonomy, tax_id, output_dir, mode, combine_sample
             week_end=week_end,
             cores=cores
         )
-        )
         summary["status"] = "Success"
         print_footer(start_time, summary)
     except Exception as e:
