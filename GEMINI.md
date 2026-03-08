@@ -75,6 +75,7 @@ A parquet file representing a single sample's read-by-read data, sorted by `t_id
 - `compression`: Compression algorithm used.
 - `sorting`: Column(s) used for sorting.
 - `source_path_abs`: Absolute path to the original source file.
+- `has_fastq`: Boolean indicating if `r1_seq`, `r1_qual`, `r2_seq`, and `r2_qual` are present.
 
 | Column | Type | Description |
 | :--- | :--- | :--- |
@@ -82,24 +83,19 @@ A parquet file representing a single sample's read-by-read data, sorted by `t_id
 | `year` | UInt16 | The ISO year of the sample |
 | `week` | UInt8 | The ISO week of the sample |
 | `read_id` | String | The read ID |
-| `r1_qual` | String | The read 1 quality string |
-| `r2_qual` | String | The read 2 quality string |
-| `r1_seq` | String | The read 1 sequence |
-| `r2_seq` | String | The read 2 sequence |
+| `r1_qual` | String | The read 1 quality string (Optional, null if Skinny/missing) |
+| `r2_qual` | String | The read 2 quality string (Optional, null if Skinny/missing) |
+| `r1_seq` | String | The read 1 sequence (Optional, null if Skinny/missing) |
+| `r2_seq` | String | The read 2 sequence (Optional, null if Skinny/missing) |
 | `r1_len` | UInt8 | The read 1 length |
 | `r2_len` | UInt8 | The read 2 length |
 | `total_len` | UInt16 | The combined read length (R1 + R2) |
 | `t_id` | UInt32 | The classified TaxID |
 | `mhg` | UInt8 | The number of minimizer hit groups (MHG) |
 | `kmer_string` | String | The Kraken 2 k-mer string |
-| `kmers_total` | UInt8 | The total number of k-mers in the read pair |
-| `kmers_ambig` | UInt8 | The number of ambiguous k-mers in the read pair |
-| `kmers_clade` | UInt8 | The number of k-mers classified to the clade |
-| `kmers_lineage` | UInt8 | The number of k-mers classified to the lineage |
-| `kmers_misclassified` | UInt8 | The number of k-mers classified outside clade/lineage |
-| `clade_ratio` | Float32 | Ratio of clade k-mers to non-ambiguous k-mers |
-| `lineage_ratio` | Float32 | Ratio of lineage k-mers to non-ambiguous k-mers |
-| `misclassified_ratio` | Float32 | Ratio of misclassified k-mers to non-ambiguous k-mers |
+
+### 1.5 `<KMER_PARQUET>` (Future)
+A future schema designed for machine learning feature extraction. It will parse the `kmer_string` from a `<KRAKEN_PARQUET>` file and use the JolTax taxonomy to calculate exact k-mer metrics (e.g., `kmers_clade`, `kmers_lineage`, `misclassified_ratio`) per read.
 
 ### 2. `<REPORT_PARQUET>`
 A single long-format parquet file containing merged, relevant counts from multiple report files.
