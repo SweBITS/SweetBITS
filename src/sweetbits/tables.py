@@ -72,7 +72,7 @@ def generate_table_logic(
     
     lf = pl.scan_parquet(input_parquet)
     
-    # 2. Filtering Samples
+    # 2. Sample Filtering and Validation
     # Execute ONE quick scan of just the sample IDs to power validation and math
     existing_samples_df = lf.select("sample_id").unique().collect()
     all_ids = set(existing_samples_df["sample_id"].to_list())
@@ -99,7 +99,10 @@ def generate_table_logic(
             fg="yellow", err=True
         )
 
-    # 2.5 Calculate True Totals for keep_composition
+    # 3. Baseline Computation (Global Totals)
+    # If the user wants to keep the composition (retain filtered reads as 'Filtered classified'),
+    # we must calculate the true, unfiltered total reads for each sample BEFORE any taxonomic
+    # filters drop rows from the lazyframe.
     true_totals = {}
     if keep_composition:
         if mode == "clade":
@@ -117,7 +120,8 @@ def generate_table_logic(
         totals_df = tot_lf.group_by(pkey).agg(pl.col("taxon_reads").sum().alias("total_reads")).collect()
         true_totals = dict(zip(totals_df[pkey].to_list(), totals_df["total_reads"].to_list()))
 
-    # 3. Load Taxonomy Tree
+    # 4. Taxonomic Filtering (JolTax Integration)
+    # Load the taxonomy tree if required for the specified mode or clade filter.
     tree = None
     if mode == "canonical" or clade_filter is not None:
         if not taxonomy_dir:
@@ -131,7 +135,9 @@ def generate_table_logic(
     if not keep_unclassified and mode != "canonical":
         lf = lf.filter(pl.col("t_id") != 0)
         
-    # 4. Aggregation based on Mode
+    # 5. Metric Aggregation
+    # Collect the necessary columns and perform the required mathematical transformations
+    # based on the requested abundance mode.
     target_cols = ["t_id", "sample_id"]
     if data_standard == "SWEBITS":
         target_cols.extend(["year", "week"])
@@ -163,7 +169,9 @@ def generate_table_logic(
             pivot_df = pivot_df.join(sample_meta, on="sample_id")
         pivot_col = "val"
 
-    # 5. Handle Column Naming based on Standard
+    # 6. Matrix Generation (Pivoting)
+    # Transform the long-format data into a wide-format matrix. 
+    # For SWEBITS data, group by YYYY_WW to aggregate technical replicates.
     if data_standard == "SWEBITS":
         pivot_df = pivot_df.with_columns(
             (pl.col("year").cast(pl.String) + "_" + pl.col("week").cast(pl.String).str.pad_start(2, "0")).alias("period")
@@ -179,7 +187,8 @@ def generate_table_logic(
         aggregate_function="sum"
     ).fill_null(0).sort("t_id")
     
-    # 6. Final Quality Filters
+    # 7. Quality Control Filters
+    # Apply minimum occupancy (--min-observed) and abundance (--min-reads) thresholds.
     sample_cols = [c for c in table.columns if c != "t_id"]
     if sample_cols:
         if min_observed > 0:
@@ -193,7 +202,10 @@ def generate_table_logic(
                 pl.max_horizontal(sample_cols) >= min_reads
             )
             
-    # 6.4 Apply keep_composition
+    # 8. Composition Preservation
+    # If the user requested --keep-composition, we compare the current column sums
+    # against the pre-calculated baseline totals. Any missing reads are bundled
+    # into a synthetic "Filtered classified" bin to preserve the global sample size.
     if keep_composition and sample_cols:
         filtered_row = {"t_id": FILTERED_TID}
         has_filtered = False
@@ -210,12 +222,16 @@ def generate_table_logic(
             filtered_df = pl.DataFrame([filtered_row], schema=table.schema)
             table = pl.concat([table, filtered_df])
             
-    # 6.5 Calculate Proportions
+    # 9. Proportion Calculation
+    # Convert raw counts to relative proportions if requested.
     if proportions and sample_cols:
         if mode in ["taxon", "canonical"]:
+            # Mutually exclusive modes naturally sum to 1.0
             exprs = [(pl.col(c) / pl.col(c).sum()).alias(c) for c in sample_cols]
             table = table.with_columns(exprs)
         elif mode == "clade":
+            # Clade mode is cumulative. We divide by the local maximum classified node
+            # plus any unclassified reads to represent the true local proportion.
             exprs = []
             for c in sample_cols:
                 max_class = table.filter(pl.col("t_id") != 0)[c].max()
@@ -227,7 +243,7 @@ def generate_table_logic(
                 exprs.append((pl.col(c) / total).alias(c))
             table = table.with_columns(exprs)
         
-    # 7. Output Generation
+    # 10. Output Generation
     ext = output_file.suffix.lower()
     if ext == ".parquet":
         meta = get_standard_metadata("RAW_TABLE", source_path=input_parquet, sorting="t_id", data_standard=data_standard)
