@@ -76,13 +76,22 @@ def annotate_table_logic(
         m_ext = m_path.suffix.lower()
         if m_ext == ".parquet":
             m_df = pl.read_parquet(m_path)
-        elif m_ext == ".tsv":
+        elif m_ext in [".tsv", ".txt"]:
             m_df = pl.read_csv(m_path, separator="\t")
-        else:
+        elif m_ext == ".csv":
             m_df = pl.read_csv(m_path)
+        else:
+            raise ValueError(f"Unsupported metadata file format '{m_ext}' for {m_path.name}. Supported formats are .csv, .tsv, .txt, .parquet")
 
         if "t_id" not in m_df.columns:
             raise ValueError(f"Metadata file {m_path.name} must contain a 't_id' column.")
+            
+        if len(m_df.columns) == 1:
+            click.secho(
+                f"Warning: Metadata file {m_path.name} only contains 1 column ('{m_df.columns[0]}'). "
+                f"This might indicate a separator mismatch or an empty metadata file.", 
+                fg="yellow", err=True
+            )
 
         m_tids = set(m_df["t_id"].to_list())
         intersect = len(base_tids_set.intersection(m_tids))

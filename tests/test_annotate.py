@@ -117,3 +117,31 @@ def test_missing_tid_column(tmp_path, mock_taxonomy, base_table):
             output_file=out_path,
             metadata_files=[bad_meta]
         )
+
+def test_unsupported_metadata_format(tmp_path, mock_taxonomy, base_table):
+    bad_ext = tmp_path / "meta.xlsx"
+    bad_ext.touch() # Create dummy file
+    
+    out_path = tmp_path / "out.csv"
+    with pytest.raises(ValueError, match="Unsupported metadata file format"):
+        annotate_table_logic(
+            input_table=base_table,
+            taxonomy_dir=mock_taxonomy,
+            output_file=out_path,
+            metadata_files=[bad_ext]
+        )
+
+def test_metadata_one_column_warning(tmp_path, mock_taxonomy, base_table, capsys):
+    one_col = tmp_path / "one_col.csv"
+    pl.DataFrame({"t_id": [9606, 10090]}).write_csv(one_col)
+    
+    out_path = tmp_path / "out.csv"
+    annotate_table_logic(
+        input_table=base_table,
+        taxonomy_dir=mock_taxonomy,
+        output_file=out_path,
+        metadata_files=[one_col]
+    )
+    
+    captured = capsys.readouterr()
+    assert "only contains 1 column" in captured.err
