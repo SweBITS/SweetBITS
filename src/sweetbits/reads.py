@@ -181,7 +181,7 @@ def extract_reads_logic(
 
             # Validate metadata and columns
             # We first check common columns, then deduce sequence columns based on metadata
-            schema = pl.scan_parquet(pfile).schema
+            schema = pl.scan_parquet(pfile).collect_schema()
             metadata = validate_sweetbits_parquet(pfile, expected_type="KRAKEN_PARQUET")
             has_fastq = metadata.get("has_fastq") == "True"
             
@@ -238,6 +238,12 @@ def extract_reads_logic(
                 # MEMORY SAFEGUARD: Process massive groups in chunks of 50,000 reads.
                 CHUNK_SIZE = 50_000
                 for chunk in group.iter_slices(CHUNK_SIZE):
+                    if has_fastq:
+                        # Filter out depleted reads (those without physical sequence data)
+                        chunk = chunk.filter(pl.col("r1_seq").is_not_null())
+                        if chunk.is_empty():
+                            continue
+
                     num_reads_in_chunk = chunk.height
                     
                     if has_fastq:
