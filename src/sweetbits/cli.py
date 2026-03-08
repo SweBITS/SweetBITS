@@ -10,6 +10,7 @@ from sweetbits.tables import generate_table_logic
 from sweetbits.metadata import read_parquet_metadata
 from sweetbits.reads import extract_reads_logic
 from sweetbits.annotate import annotate_table_logic
+from sweetbits.convert import convert_kraken_logic
 
 def print_header(ctx):
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -214,6 +215,37 @@ def inspect(parquet_file):
             click.echo(f"{display_key:20}: {value}")
     except Exception as e:
         click.secho(f"Error reading metadata: {str(e)}", fg="red", err=True)
+        sys.exit(1)
+
+@main.command(short_help="Convert Kraken and FASTQ into a KRAKEN_PARQUET.")
+@click.argument("kraken_file", type=click.Path(exists=True, path_type=Path))
+@click.option("--output", "-o", type=click.Path(path_type=Path), required=True, help="Path to output Parquet file.")
+@click.option("--r1", type=click.Path(exists=True, path_type=Path), help="Path to R1 FASTQ file.")
+@click.option("--r2", type=click.Path(exists=True, path_type=Path), help="Path to R2 FASTQ file.")
+@click.option("--no-fastq", is_flag=True, help="Create a Skinny Parquet, omitting sequences.")
+@click.option("--cores", type=int, help="Number of CPU cores to use (Default: all available).")
+def convert_kraken(kraken_file, output, r1, r2, no_fastq, cores):
+    """
+    Converts Kraken output and FASTQ files into high-performance KRAKEN_PARQUET files.
+    """
+    start_time = time.time()
+    ctx = click.get_current_context()
+    print_header(ctx)
+    print_parameters(ctx.params)
+    
+    try:
+        summary = convert_kraken_logic(
+            kraken_file=kraken_file,
+            output_file=output,
+            r1_file=r1,
+            r2_file=r2,
+            no_fastq=no_fastq,
+            cores=cores
+        )
+        summary["status"] = "Success"
+        print_footer(start_time, summary)
+    except Exception as e:
+        click.secho(f"Error: {str(e)}", fg="red", err=True)
         sys.exit(1)
 
 if __name__ == "__main__":

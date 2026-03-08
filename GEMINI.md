@@ -300,5 +300,5 @@ All SweetBITS tools that read `<KRAKEN_PARQUET>` or `<REPORT_PARQUET>` files mus
 5. [x] Implement `inspect` for metadata viewing.
 6. [x] Implement `annotate_table` for taxonomic annotation and sorting.
 7. [x] Implement Parquet version compatibility checking.
-8. [ ] Implement `convert_kraken` (Ingestion from raw Kraken/FASTQ).
+8. [x] Implement `convert_kraken` (Ingestion from raw Kraken/FASTQ).
 9. [ ] Future: `coda` command suite for Compositional Data Analysis.

@@ -106,7 +106,26 @@ sweetbits extract-reads /path/to/data \
     --output-dir ./bacteria_reads
 ```
 
-## 4. Inspecting Metadata (`inspect`)
+## 5. Ingestion (`convert-kraken`)
+
+Convert raw Kraken and FASTQ files into high-performance, compressed Parquet data lakes.
+
+```bash
+# Basic ingestion (Fat Parquet)
+sweetbits convert-kraken sample.kraken \
+    --r1 sample_R1.fastq.gz \
+    --r2 sample_R2.fastq.gz \
+    --output sample.kraken.parquet
+
+# High-performance Skinny Parquet (drops sequences, saves 90% space)
+# Highly recommended for standard workflows.
+sweetbits convert-kraken sample.kraken \
+    --no-fastq \
+    --cores 8 \
+    --output sample_skinny.kraken.parquet
+```
+
+## 6. Inspecting Metadata (`inspect`)
 
 View the provenance and configuration of any SweetBITS Parquet file.
 

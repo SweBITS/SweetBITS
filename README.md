@@ -28,6 +28,7 @@ SweetBITS provides several high-performance tools for processing Kraken 2 output
     - *Note:* `--exclude-samples` will issue a warning if an ID in your exclusion file is missing from the dataset.
 - `annotate-table`: Transforms numeric abundance matrices into human-readable files. Automatically injects full taxonomic lineages from JolTax, calculates mean/median signal, and sorts rows hierarchically (Domain/Superkingdom -> Species).
     - *External Metadata:* Seamlessly join any number of external TSV/CSV/Parquet files. The files **must** contain a `t_id` column. All other columns are automatically appended, and column collisions are safely resolved. The final table is ordered: `Taxonomy` -> `Metadata` -> `Summary Stats` -> `Samples`.
+- `convert-kraken`: Ingests massive Kraken and FASTQ files into heavily compressed, memory-mapped `<KRAKEN_PARQUET>` data lakes using an extremely fast, multiprocessed two-pointer streaming engine. Supports creating "Skinny Parquets" (`--no-fastq`) that drop sequence payloads to save 90% disk space while retaining all taxonomic intelligence.
 - `extract-reads`: Efficiently streams reads from Parquet files back into FASTQ.gz format with high throughput and a constant memory profile (OOM-safe). Supports TaxID and temporal filters.
 - `inspect`: View provenance metadata, compression settings, and sorting information stored in SweetBITS Parquet files.
 
