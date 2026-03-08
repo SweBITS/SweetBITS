@@ -148,15 +148,7 @@ def annotate_table_logic(
         ordered_cols.remove("t_id")
         ordered_cols.insert(0, "t_id")
         
-    # Deduplicate while preserving order, just in case
-    seen = set()
-    final_cols = []
-    for c in ordered_cols:
-        if c not in seen:
-            final_cols.append(c)
-            seen.add(c)
-            
-    df = df.select(final_cols)
+    df = df.select(ordered_cols)
 
     # 7. Output Generation
     out_ext = output_file.suffix.lower()
