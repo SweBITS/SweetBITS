@@ -16,7 +16,27 @@ from sweetbits.reads import extract_reads_logic
 from sweetbits.annotate import annotate_table_logic
 from sweetbits.convert import convert_kraken_logic
 
-def print_header(ctx):
+def print_splash():
+    """Prints the stylish ASCII logo and developer information."""
+    click.secho(r"  ____                     _   ____ ___ _____ ____  ", fg="bright_cyan", bold=True, err=True)
+    click.secho(r" / ___|_      _____  ___ _| |_| __ )_ _|_   _/ ___| ", fg="bright_cyan", bold=True, err=True)
+    click.secho(r" \___ \ \ /\ / / _ \/ _ \ __|  _ \ | | | | \___ \ ", fg="cyan", bold=True, err=True)
+    click.secho(r"  ___) \ V  V /  __/  __/ |_| |_) || | | |  ___) |", fg="cyan", bold=True, err=True)
+    click.secho(r" |____/ \_/\_/ \___|\___|\__|____/|___||_| |____/ ", fg="cyan", bold=True, err=True)
+    click.echo("", err=True)
+    click.secho(f" SweetBITS v{__version__}", fg="bright_white", bold=True, err=True)
+    click.echo("", err=True)
+    click.secho(" A suite of sweet command-line tools for Kraken 2", fg="bright_white", err=True)
+    click.secho(" derived data and the SweBITS project.", fg="bright_white", err=True)
+    click.echo("", err=True)
+    click.echo(click.style(" Developer: ", fg="bright_black") + click.style("Daniel Svensson for SweBITS", fg="yellow"), err=True)
+    click.echo(click.style(" GitHub:    ", fg="bright_black") + click.style("https://github.com/SweBITS/SweetBITS", fg="bright_blue"), err=True)
+    click.echo("", err=True)
+    click.echo("-" * 60, err=True)
+    click.echo("", err=True)
+
+def print_invocation_info():
+    """Prints technical details about the current execution."""
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     click.echo(f"{'Start time':20}: {now}", err=True)
     click.echo(f"{'Toolkit Version':20}: {__version__}", err=True)
@@ -55,13 +75,17 @@ def print_footer(start_time, summary_dict=None):
 
 CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 
-@click.group(context_settings=CONTEXT_SETTINGS)
-def main():
-    """
-    SweetBITS: Bioinformatics command-line tools for the Swedish Biodiversity 
-    in Time and Space (SweBITS) project.
-    """
-    pass
+@click.group(context_settings=CONTEXT_SETTINGS, invoke_without_command=True)
+@click.pass_context
+def main(ctx):
+    """(Bioinformatics tools for the SweBITS project)"""
+    if ctx.invoked_subcommand is None:
+        print_splash()
+        click.echo(ctx.get_help())
+    else:
+        # For subcommands, splash is printed inside the command function 
+        # to ensure it's at the very top before any other output.
+        pass
 
 @main.command(short_help="Merge Kraken reports into a single Parquet file.")
 @click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path))
@@ -76,7 +100,8 @@ def gather_reports(directory, output, recursive, include, overwrite):
     """
     start_time = time.time()
     ctx = click.get_current_context()
-    print_header(ctx)
+    print_splash()
+    print_invocation_info()
     print_parameters(ctx.params)
     
     try:
@@ -118,7 +143,8 @@ def table(input_parquet, output, mode, taxonomy, exclude_samples, min_observed, 
 
     start_time = time.time()
     ctx = click.get_current_context()
-    print_header(ctx)
+    print_splash()
+    print_invocation_info()
     print_parameters(ctx.params)
     
     try:
@@ -162,7 +188,8 @@ def extract_reads(input_path, taxonomy, tax_id, output_dir, mode, combine_sample
     """
     start_time = time.time()
     ctx = click.get_current_context()
-    print_header(ctx)
+    print_splash()
+    print_invocation_info()
     print_parameters(ctx.params)
 
     # Parse tax_id list
@@ -208,7 +235,8 @@ def annotate_table(input_table, taxonomy, output, metadata, cores, overwrite):
     """
     start_time = time.time()
     ctx = click.get_current_context()
-    print_header(ctx)
+    print_splash()
+    print_invocation_info()
     print_parameters(ctx.params)
     
     try:
@@ -230,6 +258,7 @@ def annotate_table(input_table, taxonomy, output, metadata, cores, overwrite):
 @click.argument("parquet_file", type=click.Path(exists=True, path_type=Path))
 def inspect(parquet_file):
     """Prints the global metadata stored in a SweetBITS-generated Parquet file."""
+    print_splash()
     try:
         metadata = read_parquet_metadata(parquet_file)
         if not metadata:
@@ -258,7 +287,8 @@ def convert_kraken(kraken_file, output, r1, r2, cores, overwrite):
     """
     start_time = time.time()
     ctx = click.get_current_context()
-    print_header(ctx)
+    print_splash()
+    print_invocation_info()
     print_parameters(ctx.params)
     
     try:
