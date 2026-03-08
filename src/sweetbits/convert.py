@@ -157,7 +157,7 @@ def convert_kraken_logic(
     # 3. Schema Definition
     # We strictly enforce datatypes at ingestion to minimize disk footprint
     schema_fields = [
-        ("sample_id", pa.string()),
+        ("sample_id", pa.dictionary(pa.int32(), pa.string())),
         ("read_id", pa.string()),
         ("t_id", pa.uint32()),
         ("mhg", pa.uint8()),
@@ -187,82 +187,88 @@ def convert_kraken_logic(
         # 4. Two-Pointer Streaming Logic
         # The Kraken file acts as the absolute source of truth. If a FASTQ read is missing 
         # (e.g., host depletion), we insert nulls but keep the taxonomic classification.
+        click.secho("Phase 1/3: Ingesting data and synchronizing streams...", fg="cyan", err=True)
         try:
-            while True:
-                chunk_data = {f[0]: [] for f in schema_fields}
-                lines_read = 0
-                
-                while lines_read < CHUNK_SIZE:
-                    line = k_stream.readline()
-                    if not line:
+            with click.progressbar(length=None, label="Reading", show_pos=True) as bar:
+                while True:
+                    chunk_data = {f[0]: [] for f in schema_fields}
+                    lines_read = 0
+                    
+                    while lines_read < CHUNK_SIZE:
+                        line = k_stream.readline()
+                        if not line:
+                            break
+                            
+                        lines_read += 1
+                        parts = line.rstrip('\n').split('\t')
+                        
+                        # Parse SweBITS/Kraken read-by-read format
+                        read_id = parts[1]
+                        t_id = int(parts[2])
+                        
+                        lens = parts[3].split('|')
+                        r1_len = int(lens[0])
+                        r2_len = int(lens[1]) if len(lens) > 1 else 0
+                        total_len = r1_len + r2_len
+                        
+                        try:
+                            mhg = int(parts[4])
+                        except (IndexError, ValueError):
+                            mhg = 0
+                            
+                        kmer_string = parts[5] if len(parts) > 5 else ""
+                        
+                        chunk_data["sample_id"].append(sample_id)
+                        chunk_data["read_id"].append(read_id)
+                        chunk_data["t_id"].append(t_id)
+                        chunk_data["mhg"].append(mhg)
+                        chunk_data["r1_len"].append(r1_len)
+                        chunk_data["r2_len"].append(r2_len)
+                        chunk_data["total_len"].append(total_len)
+                        chunk_data["kmer_string"].append(kmer_string)
+                        
+                        if data_standard == "SWEBITS":
+                            chunk_data["year"].append(year)
+                            chunk_data["week"].append(week)
+                            
+                        if has_fastq:
+                            r1_s, r1_q = None, None
+                            r2_s, r2_q = None, None
+                            
+                            # Left Join: Match FASTQ sequences if IDs align perfectly
+                            if curr_r1 and curr_r1[0] == read_id:
+                                _, r1_s, r1_q = curr_r1
+                                try:
+                                    curr_r1 = next(r1_iter)
+                                except StopIteration:
+                                    curr_r1 = None
+                                
+                                if curr_r2 and curr_r2[0] == read_id:
+                                    _, r2_s, r2_q = curr_r2
+                                    try:
+                                        curr_r2 = next(r2_iter)
+                                    except StopIteration:
+                                        curr_r2 = None
+                                
+                                matched_fastq_count += 1
+                                last_matched_id = read_id
+                                    
+                            chunk_data["r1_seq"].append(r1_s)
+                            chunk_data["r1_qual"].append(r1_q)
+                            chunk_data["r2_seq"].append(r2_s)
+                            chunk_data["r2_qual"].append(r2_q)
+                            
+                        records_processed += 1
+                    
+                    if lines_read == 0:
                         break
                         
-                    lines_read += 1
-                    parts = line.rstrip('\n').split('\t')
+                    # Dictionary encode sample_id before creating table to match schema
+                    chunk_data["sample_id"] = pa.array(chunk_data["sample_id"]).dictionary_encode()
                     
-                    # Parse SweBITS/Kraken read-by-read format
-                    read_id = parts[1]
-                    t_id = int(parts[2])
-                    
-                    lens = parts[3].split('|')
-                    r1_len = int(lens[0])
-                    r2_len = int(lens[1]) if len(lens) > 1 else 0
-                    total_len = r1_len + r2_len
-                    
-                    try:
-                        mhg = int(parts[4])
-                    except (IndexError, ValueError):
-                        mhg = 0
-                        
-                    kmer_string = parts[5] if len(parts) > 5 else ""
-                    
-                    chunk_data["sample_id"].append(sample_id)
-                    chunk_data["read_id"].append(read_id)
-                    chunk_data["t_id"].append(t_id)
-                    chunk_data["mhg"].append(mhg)
-                    chunk_data["r1_len"].append(r1_len)
-                    chunk_data["r2_len"].append(r2_len)
-                    chunk_data["total_len"].append(total_len)
-                    chunk_data["kmer_string"].append(kmer_string)
-                    
-                    if data_standard == "SWEBITS":
-                        chunk_data["year"].append(year)
-                        chunk_data["week"].append(week)
-                        
-                    if has_fastq:
-                        r1_s, r1_q = None, None
-                        r2_s, r2_q = None, None
-                        
-                        # Left Join: Match FASTQ sequences if IDs align perfectly
-                        if curr_r1 and curr_r1[0] == read_id:
-                            _, r1_s, r1_q = curr_r1
-                            try:
-                                curr_r1 = next(r1_iter)
-                            except StopIteration:
-                                curr_r1 = None
-                            
-                            if curr_r2 and curr_r2[0] == read_id:
-                                _, r2_s, r2_q = curr_r2
-                                try:
-                                    curr_r2 = next(r2_iter)
-                                except StopIteration:
-                                    curr_r2 = None
-                            
-                            matched_fastq_count += 1
-                            last_matched_id = read_id
-                                
-                        chunk_data["r1_seq"].append(r1_s)
-                        chunk_data["r1_qual"].append(r1_q)
-                        chunk_data["r2_seq"].append(r2_s)
-                        chunk_data["r2_qual"].append(r2_q)
-                        
-                    records_processed += 1
-                
-                if lines_read == 0:
-                    break
-                    
-                table = pa.Table.from_pydict(chunk_data, schema=schema)
-                writer.write_table(table)
+                    table = pa.Table.from_pydict(chunk_data, schema=schema)
+                    writer.write_table(table)
+                    bar.update(lines_read)
                 
         finally:
             writer.close()
@@ -291,11 +297,13 @@ def convert_kraken_logic(
 
         # 6. Phase 2: Sort (Out-of-Core)
         # Sort by TaxID to maximize Run-Length Encoding (RLE) during Parquet zstd compression
+        click.secho("Phase 2/3: Polars out-of-core sorting...", fg="cyan", err=True)
         tmp_sorted = Path(tmpdir) / "sorted.parquet"
         lf = pl.scan_parquet(tmp_unsorted).sort("t_id")
         lf.sink_parquet(tmp_sorted, compression="uncompressed")
         
         # 7. Phase 3: Metadata Injection & Final Compression
+        click.secho("Phase 3/3: Metadata injection and final zstd compression...", fg="cyan", err=True)
         meta = get_standard_metadata(
             file_type="KRAKEN_PARQUET",
             source_path=kraken_file,
@@ -307,6 +315,7 @@ def convert_kraken_logic(
         meta["has_fastq"] = "True" if has_fastq else "False"
         
         sorted_pf = pq.ParquetFile(tmp_sorted)
+        total_rows = sorted_pf.metadata.num_rows
         
         existing_meta = sorted_pf.schema_arrow.metadata or {}
         merged_meta = {**existing_meta}
@@ -316,8 +325,10 @@ def convert_kraken_logic(
         new_schema = sorted_pf.schema_arrow.with_metadata(merged_meta)
         
         with pq.ParquetWriter(output_file, new_schema, compression="zstd", compression_level=3) as final_writer:
-            for batch in sorted_pf.iter_batches(batch_size=100_000):
-                final_writer.write_batch(batch)
+            with click.progressbar(length=total_rows, label="Compressing", show_pos=True) as bar:
+                for batch in sorted_pf.iter_batches(batch_size=100_000):
+                    final_writer.write_batch(batch)
+                    bar.update(batch.num_rows)
 
     return {
         "records_processed": records_processed,
