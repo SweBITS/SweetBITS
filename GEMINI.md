@@ -2,7 +2,7 @@
 *: Name TBD
 
 ## Overview
-This is the master instruction document for an AI agent assisting in the development of **SweetBITS**, a suite of bioinformatics command-line tools tightly knit to data processing in the SweBITS project (Swedish Biodiversity in Time and Space).
+**SweetBITS** is a suite of sweet command-line tools for Kraken 2 derived data and the Swedish Biodiversity in Time and Space (SweBITS) project.
 
 ### The SweBITS Context
 SweBITS pioneers metagenomic shotgun sequencing of archived air filters from two Swedish sites (Ljungbyhed and Kiruna). 

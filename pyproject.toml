@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "sweetbits"
 version = "0.1.0"
-description = "Bioinformatics CLI tools for SweBITS"
+description = "SweetBITS: a suite of sweet command-line tools for Kraken 2 derived data and the Swedish Biodiversity in Time and Space (SweBITS) project."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
