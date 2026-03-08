@@ -135,9 +135,9 @@ Converts Kraken output and FASTQ files into high-performance, sorted `<KRAKEN_PA
   - `--output FILE`: Path to the output Parquet file.
   - `--r1 FILE`: Path to R1 FASTQ file (can be `.gz`).
   - `--r2 FILE`: Path to R2 FASTQ file (can be `.gz`).
-  - `--no-fastq`: Flag to create a "Skinny" Parquet, omitting sequence and quality strings to save significant disk space while retaining all taxonomic intelligence.
   - `--cores INT`: Number of CPU cores to dedicate to the process (Default: all available). Controls Polars thread pool and OS-level decompression pipes. Recommendation: At least 4 cores for optimal streaming.
 - **Implementation Details:**
+  - **Skinny vs Fat:** If `--r1` and `--r2` are omitted, a "Skinny" Parquet is created, omitting sequence and quality strings to save significant disk space while retaining all taxonomic intelligence.
   - **Kraken-Driven Left Join:** Missing reads in the FASTQ files (e.g., host-depleted) receive `null` sequences to perfectly preserve original sample mass balance.
   - **Synchronicity Audit:** Fails loudly if FASTQ read order deviates from Kraken report order.
   - **Data Types:** Heavily downcasts metrics (e.g., `UInt8` for lengths, `UInt32` for TaxIDs).

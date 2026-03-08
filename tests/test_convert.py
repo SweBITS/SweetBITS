@@ -24,7 +24,7 @@ def test_convert_skinny(mock_files, tmp_path):
     k_file, _, _ = mock_files
     out_file = tmp_path / "out_skinny.parquet"
     
-    res = convert_kraken_logic(k_file, out_file, no_fastq=True)
+    res = convert_kraken_logic(k_file, out_file)
     assert res["records_processed"] == 3
     assert not res["has_fastq"]
     assert res["data_standard"] == "SWEBITS"

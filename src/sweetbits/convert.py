@@ -69,7 +69,6 @@ def convert_kraken_logic(
     output_file: Path,
     r1_file: Optional[Path] = None,
     r2_file: Optional[Path] = None,
-    no_fastq: bool = False,
     cores: Optional[int] = None
 ) -> Dict[str, Any]:
     """
@@ -83,7 +82,6 @@ def convert_kraken_logic(
         output_file : Path where the final Parquet will be saved.
         r1_file     : Optional path to the R1 FASTQ file (.fastq or .gz).
         r2_file     : Optional path to the R2 FASTQ file (.fastq or .gz).
-        no_fastq    : If True, completely ignores sequences to create a Skinny Parquet.
         cores       : Number of threads to assign to Polars for out-of-core sorting.
 
     Returns:
@@ -106,16 +104,13 @@ def convert_kraken_logic(
     sample_id = info["sample_id"]
     year, week = info["year"], info["week"]
 
-    if no_fastq:
-        has_fastq = False
-    else:
-        # Enforce project requirement for paired-end data
-        if (r1_file is not None) != (r2_file is not None):
-            raise ValueError(
-                "SweetBITS requires paired-end data. Both --r1 and --r2 FASTQ files "
-                "must be provided, or neither if using --no-fastq."
-            )
-        has_fastq = (r1_file is not None)
+    # Enforce project requirement for paired-end data
+    if (r1_file is not None) != (r2_file is not None):
+        raise ValueError(
+            "SweetBITS requires paired-end data. Both --r1 and --r2 FASTQ files "
+            "must be provided, or neither to create a skinny Parquet."
+        )
+    has_fastq = (r1_file is not None)
     
     # 2. Stream Initialization
     # We use independent OS-level decompression streams to avoid the Python GIL

@@ -222,9 +222,8 @@ def inspect(parquet_file):
 @click.option("--output", "-o", type=click.Path(path_type=Path), required=True, help="Path to output Parquet file.")
 @click.option("--r1", type=click.Path(exists=True, path_type=Path), help="Path to R1 FASTQ file.")
 @click.option("--r2", type=click.Path(exists=True, path_type=Path), help="Path to R2 FASTQ file.")
-@click.option("--no-fastq", is_flag=True, help="Create a Skinny Parquet, omitting sequences.")
 @click.option("--cores", type=int, help="Number of CPU cores to use (Default: all available).")
-def convert_kraken(kraken_file, output, r1, r2, no_fastq, cores):
+def convert_kraken(kraken_file, output, r1, r2, cores):
     """
     Converts Kraken output and FASTQ files into high-performance KRAKEN_PARQUET files.
     """
@@ -239,7 +238,6 @@ def convert_kraken(kraken_file, output, r1, r2, no_fastq, cores):
             output_file=output,
             r1_file=r1,
             r2_file=r2,
-            no_fastq=no_fastq,
             cores=cores
         )
         summary["status"] = "Success"
