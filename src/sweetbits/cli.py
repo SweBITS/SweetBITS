@@ -78,13 +78,18 @@ CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 @click.group(context_settings=CONTEXT_SETTINGS, invoke_without_command=True)
 @click.pass_context
 def main(ctx):
+    # Only show splash if we are at the root level (no subcommand or subcommand is help)
+    # Check if we are running root help or root with no command
+    is_help = any(arg in sys.argv for arg in ['-h', '--help'])
+    has_subcommand = any(arg in [cmd.name.replace('_', '-') for cmd in main.commands.values()] for arg in sys.argv)
+
     if ctx.invoked_subcommand is None:
         print_splash()
         click.echo(ctx.get_help())
-    else:
-        # For subcommands, splash is printed inside the command function 
-        # to ensure it's at the very top before any other output.
-        pass
+        ctx.exit()
+    elif is_help and not has_subcommand:
+        # This catch is for cases where click might still be processing help
+        print_splash()
 
 @main.command(short_help="Merge Kraken reports into a single Parquet file.")
 @click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path))
