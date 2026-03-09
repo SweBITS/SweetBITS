@@ -346,7 +346,7 @@ def convert_kraken_logic(
 
     _log_mem("End of Conversion")
     
-    click.secho("Done!", fg="green", bold=True, err=True)
+    click.secho("Done!", fg="cyan", bold=True, err=True)
     
     return {
         "records_processed": records_processed,

@@ -332,7 +332,7 @@ def extract_reads_logic(
         if handle_manager:
             handle_manager.close_all()
 
-    click.secho("Done!", fg="green", bold=True, err=True)
+    click.secho("Done!", fg="cyan", bold=True, err=True)
 
     return {
         "samples_processed": samples_processed,

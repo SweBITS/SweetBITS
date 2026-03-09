@@ -294,7 +294,7 @@ def generate_table_logic(
         
     save_companion_metadata(output_file, meta)
     
-    click.secho("Done!", fg="green", bold=True, err=True)
+    click.secho("Done!", fg="cyan", bold=True, err=True)
         
     return {
         "data_standard": data_standard,
