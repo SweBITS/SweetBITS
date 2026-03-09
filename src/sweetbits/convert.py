@@ -17,6 +17,10 @@ from typing import Dict, Any, Optional, Iterator, Tuple
 from sweetbits.utils import parse_sample_id, get_sample_info
 from sweetbits.metadata import get_standard_metadata
 
+# Tweak Polars for large-scale data handling
+# Setting a smaller chunk size for streaming operations to reduce peak memory pressure
+pl.Config.set_streaming_chunk_size(50_000)
+
 def _open_text_stream(path: Path):
     """
     Opens a text stream, using an OS-level gzip subprocess if necessary for maximum performance.
@@ -184,7 +188,8 @@ def convert_kraken_logic(
     
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_unsorted = Path(tmpdir) / "unsorted.parquet"
-        writer = pq.ParquetWriter(tmp_unsorted, schema, compression='NONE')
+        # Use snappy for intermediate files: fast, low CPU, reduces tmpfs/memory pressure
+        writer = pq.ParquetWriter(tmp_unsorted, schema, compression='snappy')
         
         # 4. Two-Pointer Streaming Logic
         # The Kraken file acts as the absolute source of truth. If a FASTQ read is missing 
@@ -306,6 +311,7 @@ def convert_kraken_logic(
         click.secho("Phase 2/3: Polars out-of-core sorting...", fg="cyan", err=True)
         tmp_sorted = Path(tmpdir) / "sorted.parquet"
         lf = pl.scan_parquet(tmp_unsorted).sort("t_id")
+        # Ensure we use streaming for the sort-to-disk phase
         lf.sink_parquet(tmp_sorted, compression="uncompressed")
         
         gc.collect()
