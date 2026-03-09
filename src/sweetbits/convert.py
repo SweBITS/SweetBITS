@@ -10,6 +10,7 @@ import click
 import polars as pl
 import pyarrow as pa
 import pyarrow.parquet as pq
+import gc
 from pathlib import Path
 from typing import Dict, Any, Optional, Iterator, Tuple
 
@@ -147,7 +148,7 @@ def convert_kraken_logic(
         except StopIteration:
             pass
 
-    CHUNK_SIZE = 500_000
+    CHUNK_SIZE = 200_000
     records_processed = 0
     matched_fastq_count = 0
     last_matched_id = "None"
@@ -270,7 +271,7 @@ def convert_kraken_logic(
                 writer.write_table(table)
                 
                 # Provide periodic feedback
-                if records_processed % 1_000_000 == 0 or records_processed < 1_000_000:
+                if records_processed % 1_000_000 == 0:
                     click.secho(f"  Processed {records_processed:,} reads...", fg="bright_black", err=True)
                 
         finally:
@@ -298,6 +299,8 @@ def convert_kraken_logic(
             msg += "Ensure downstream tools (depletion/cleaning) preserved read order and did not add new reads."
             raise RuntimeError(msg)
 
+        gc.collect()
+
         # 6. Phase 2: Sort (Out-of-Core)
         # Sort by TaxID to maximize Run-Length Encoding (RLE) during Parquet zstd compression
         click.secho("Phase 2/3: Polars out-of-core sorting...", fg="cyan", err=True)
@@ -305,6 +308,8 @@ def convert_kraken_logic(
         lf = pl.scan_parquet(tmp_unsorted).sort("t_id")
         lf.sink_parquet(tmp_sorted, compression="uncompressed")
         
+        gc.collect()
+
         # 7. Phase 3: Metadata Injection & Final Compression
         click.secho("Phase 3/3: Metadata injection and final zstd compression...", fg="cyan", err=True)
         meta = get_standard_metadata(
