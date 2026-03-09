@@ -39,7 +39,7 @@ sweetbits
 
 SweetBITS provides several high-performance tools for processing Kraken 2 outputs. All tools that generate output files feature strict **overwrite protection**; use the `--overwrite` flag to replace existing files.
 
-- `collect kraken reports`: Merges multiple Kraken reports into a single, Polars-optimized Parquet file with full provenance metadata. Supports flexible SweBITS sample IDs (e.g., `Ki-2022_20_001`, `Lj_2013_1_142`, `Ki-2022-01-1`).
+- `collect kraken reports`: Merges multiple Kraken reports into a single, Polars-optimized Parquet file with full provenance metadata (saved to a JSON companion file). Supports flexible SweBITS sample IDs (e.g., `Ki-2022_20_001`, `Lj_2013_1_142`, `Ki-2022-01-1`).
     - *Automatic Detection:* Handles both newer 8-column (with minimizers) and legacy 6-column Kraken reports automatically.
     - *Automatic Data Standard:* Automatically detects and adapts to SweBITS or Generic datasets based on input filenames.
 - `produce table`: Generates wide-format abundance matrices. Supports three modes:
@@ -51,7 +51,7 @@ SweetBITS provides several high-performance tools for processing Kraken 2 output
     - *External Metadata:* Seamlessly join any number of external TSV/CSV/Parquet files. The files **must** contain a `t_id` column. All other columns are automatically appended, and column collisions are safely resolved. The final table is ordered: `Taxonomy` -> `Metadata` -> `Summary Stats` -> `Samples`.
 - `collect kraken classifications`: Ingests massive Kraken and FASTQ files into heavily compressed, memory-mapped `<KRAKEN_PARQUET>` data lakes using an extremely fast, multiprocessed two-pointer streaming engine. If FASTQ files are omitted, it automatically creates a "Skinny Parquet" that drops sequence payloads to save significant disk space while retaining all taxonomic intelligence.
 - `produce reads`: Efficiently streams reads from Parquet files back into FASTQ.gz format with high throughput and a constant memory profile (OOM-safe). Supports TaxID and temporal filters.
-- `inspect`: View provenance metadata, compression settings, and sorting information stored in SweetBITS Parquet files.
+- `inspect`: View provenance metadata, compression settings, and sorting information stored in SweetBITS JSON companion files for any generated output.
 
 ## Shell Autocompletion
 

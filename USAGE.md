@@ -138,9 +138,10 @@ sweetbits collect kraken classifications sample.kraken \
 
 ## 6. Inspecting Metadata (`inspect`)
 
-View the provenance and configuration of any SweetBITS Parquet file.
+View the provenance and configuration of any SweetBITS generated file via its JSON companion metadata.
 
 ```bash
 sweetbits inspect merged_reports.parquet
+sweetbits inspect abundance_table.csv.json
 ```
 

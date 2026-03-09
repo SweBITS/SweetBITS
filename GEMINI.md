@@ -185,22 +185,24 @@ Generates Krona plots from abundance tables. Needs further discussion.
 ### Inspection Tools
 
 #### `inspect`
-Prints the global metadata stored in a SweetBITS-generated Parquet file.
-- **Inputs:** `<PARQUET_FILE>`
+Prints the global provenance metadata stored in a SweetBITS-generated JSON companion file.
+- **Inputs:** `<TARGET_FILE>` (e.g., Parquet, CSV, TSV) or its `.json` companion file.
 - **Outputs:** Formatted summary of provenance metadata.
 
 ---
 
 ## Data Integrity & Validation
 
-### Parquet Metadata Contract
-All SweetBITS tools that read `<KRAKEN_PARQUET>` or `<REPORT_PARQUET>` files must strictly validate the input using `validate_sweetbits_parquet()`.
+### JSON Companion Metadata Contract
+All SweetBITS tools that read `<KRAKEN_PARQUET>`, `<REPORT_PARQUET>`, or `<RAW_TABLE>` files must strictly validate the input using `validate_sweetbits_file()`.
+Instead of embedding metadata in the Parquet header, SweetBITS uses a Strict Mode JSON companion file (e.g., `data.parquet.json`).
 - **Requirements:**
+    - The `[filename].extension.json` companion file must exist alongside the data file.
     - Must contain `sweetbits_version`.
     - Must pass **Minimum Compatible Version (MCV)** checking. The version in the file must be $\ge$ the `MINIMUM_COMPATIBLE_VERSION` hardcoded in `metadata.py` and $\le$ the currently running SweetBITS version.
     - Must match the expected `file_type`.
     - Must contain all required columns for the specific operation.
-- **Failure:** Tools must raise a clear `ValueError` explaining the mismatch to prevent processing of incompatible or non-toolkit data.
+- **Failure:** Tools must raise a clear `FileNotFoundError` if the companion file is missing, or a `ValueError` explaining the mismatch to prevent processing of incompatible or non-toolkit data.
 
 ---
 
