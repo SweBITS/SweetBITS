@@ -11,7 +11,6 @@ from datetime import datetime
 from sweetbits import __version__
 from sweetbits.reports import gather_reports_logic
 from sweetbits.tables import generate_table_logic
-from sweetbits.metadata import read_parquet_metadata
 from sweetbits.reads import extract_reads_logic
 from sweetbits.annotate import annotate_table_logic
 from sweetbits.convert import convert_kraken_logic
