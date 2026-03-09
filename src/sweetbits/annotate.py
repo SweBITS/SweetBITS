@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 from joltax import JolTree
 from sweetbits.metadata import validate_sweetbits_file, get_standard_metadata, save_companion_metadata
-from sweetbits.utils import FILTERED_TID
+from sweetbits.utils import FILTERED_TID, UNCLASSIFIED_TID
 
 logger = logging.getLogger(__name__)
 
@@ -104,10 +104,14 @@ def annotate_table_logic(
     sample_cols = [c for c in df.columns if c != "t_id"]
     base_tids = df["t_id"].to_list()
 
-    # Extract FILTERED_TID so JolTax doesn't process it (it's synthetic)
+    # Extract special TaxIDs so JolTax doesn't process them
     has_filtered = FILTERED_TID in base_tids
     if has_filtered:
         base_tids = [tid for tid in base_tids if tid != FILTERED_TID]
+
+    has_unclassified = UNCLASSIFIED_TID in base_tids
+    if has_unclassified:
+        base_tids = [tid for tid in base_tids if tid != UNCLASSIFIED_TID]
 
     base_tids_set = set(base_tids)
     num_taxa = len(base_tids)
@@ -119,23 +123,30 @@ def annotate_table_logic(
     # We enforce strict=True because the JolTax cache MUST match the Kraken database
     # used to generate the abundance table. Missing TaxIDs indicate a critical config error.
     tax_df = tree.annotate(base_tids, strict=True)
+    
+    # Ensure t_id is UInt32 to accommodate large IDs like FILTERED_TID
+    tax_df = tax_df.with_columns(pl.col("t_id").cast(pl.UInt32))
+    
     click.secho(f"Annotated {num_taxa}/{num_taxa} taxa using JolTax taxonomy", fg="green", err=True)
 
-    # Re-inject the synthetic Filtered Classified row
-    if has_filtered:
-        filtered_row = {"t_id": [FILTERED_TID]}
-        for col in tax_df.columns:
-            if col != "t_id":
-                if col == "t_rank":
-                    filtered_row[col] = ["synthetic"]
-                elif col == "t_scientific_name":
-                    filtered_row[col] = ["Filtered classified"]
-                else:
-                    filtered_row[col] = [None]
+    # Re-inject special synthetic rows
+    special_rows = []
+    if has_unclassified:
+        unclass_row = {"t_id": [UNCLASSIFIED_TID], "t_scientific_name": ["unclassified"], "t_rank": ["no rank"]}
+        special_rows.append(unclass_row)
 
-        # Match types exactly to avoid Polars SchemaError
-        synth_df = pl.DataFrame(filtered_row, schema=tax_df.schema)
-        tax_df = pl.concat([tax_df, synth_df])
+    if has_filtered:
+        filtered_row = {"t_id": [FILTERED_TID], "t_scientific_name": ["Filtered classified"], "t_rank": ["synthetic"]}
+        special_rows.append(filtered_row)
+
+    if special_rows:
+        for row in special_rows:
+            for col in tax_df.columns:
+                if col not in row:
+                    row[col] = [None]
+
+            row_df = pl.DataFrame(row, schema=tax_df.schema)
+            tax_df = pl.concat([tax_df, row_df])
 
     tax_cols = tax_df.columns
     df = df.join(tax_df, on="t_id", how="left")
@@ -242,24 +253,27 @@ def annotate_table_logic(
 
         # 5.4 Execute DFS Traversal
         dfs_order = []
+
+        # Prepend Unclassified and Filtered reads if present
+        if UNCLASSIFIED_TID in table_tid_means:
+            dfs_order.append(UNCLASSIFIED_TID)
+        if has_filtered:
+            dfs_order.append(FILTERED_TID)
+
         stack = [0] # JolTree root index is 0
-        visited_tids = set()
+        visited_tids = set(dfs_order)
 
         while stack:
             idx = stack.pop()
             tid = int(tree._index_to_id[idx])
 
-            if tid in table_tid_means:
+            if tid in table_tid_means and tid not in visited_tids:
                 dfs_order.append(tid)
                 visited_tids.add(tid)
 
             # Reverse order for stack to process heaviest first
             for c_idx in reversed(children[idx]):
                 stack.append(c_idx)
-
-        # Re-inject the synthetic Filtered Classified row at the bottom
-        if has_filtered:
-            dfs_order.append(FILTERED_TID)
 
         # Create a mapping for Polars sort
         order_df = pl.DataFrame({
@@ -268,7 +282,6 @@ def annotate_table_logic(
         }).with_columns(pl.col("t_id").cast(pl.UInt32))
 
         df = df.join(order_df, on="t_id", how="left").sort("sort_index").drop("sort_index")
-
     else: # Hierarchical Alphabetical
         click.secho("Applying hierarchical taxonomic sort...", fg="cyan", err=True)
         sort_cols_target = [
@@ -278,7 +291,14 @@ def annotate_table_logic(
         actual_sort_cols = [c for c in sort_cols_target if c in df.columns]
 
         # Use case-insensitive sorting for string columns to avoid ASCII E < d issues
-        sort_exprs = []
+        # and ensure Unclassified/Filtered are always at the top
+        sort_exprs = [
+            # Priority 1: Unclassified (0)
+            (pl.col("t_id") != UNCLASSIFIED_TID).cast(pl.UInt8),
+            # Priority 2: Filtered Classified (MaxInt)
+            (pl.col("t_id") != FILTERED_TID).cast(pl.UInt8),
+        ]
+
         for c in actual_sort_cols:
             if c == "t_id":
                 sort_exprs.append(pl.col(c))
@@ -287,7 +307,6 @@ def annotate_table_logic(
                 sort_exprs.append(pl.col(c).cast(pl.Utf8).str.to_lowercase())
 
         df = df.sort(sort_exprs, nulls_last=True)
-
     # 6. Column Ordering
     ordered_cols = tax_cols + metadata_cols + ["mean_signal"] + sample_cols
     # Ensure t_id is first if it isn't already (though JolTax annotate puts it first)

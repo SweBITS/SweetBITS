@@ -158,6 +158,63 @@ def test_annotate_table_dfs_sorting_weights(tmp_path, mock_taxonomy):
     # Human (9606) is much heavier than Mouse (1) so it comes first in its branch
     assert tids == [9606, 10090, 2]
 
+def test_annotate_table_dfs_special_rows(tmp_path, mock_taxonomy):
+    # Setup a table with special rows
+    from sweetbits.utils import UNCLASSIFIED_TID, FILTERED_TID
+    
+    df = pl.DataFrame({
+        "t_id": [2, UNCLASSIFIED_TID, FILTERED_TID, 9606],
+        "sample_1": [10, 1000, 50, 1], 
+    })
+    path = tmp_path / "special.parquet"
+    meta = get_standard_metadata("RAW_TABLE")
+    df.write_parquet(path)
+    save_companion_metadata(path, meta)
+    
+    out_path = tmp_path / "out_dfs_special.csv"
+    annotate_table_logic(
+        input_table=path,
+        taxonomy_dir=mock_taxonomy,
+        output_file=out_path,
+        sort_order="dfs"
+    )
+    
+    df_res = pl.read_csv(out_path)
+    tids = df_res["t_id"].to_list()
+    # Unclassified (0) then Filtered (4294967295) then Tree (2, 9606)
+    assert tids[0] == UNCLASSIFIED_TID
+    assert tids[1] == FILTERED_TID
+    assert tids[2:] == [2, 9606] # 2 (10) heavier than 9606 (1)
+
+def test_annotate_table_alphabetical_special_rows(tmp_path, mock_taxonomy):
+    # Setup a table with special rows
+    from sweetbits.utils import UNCLASSIFIED_TID, FILTERED_TID
+    
+    df = pl.DataFrame({
+        "t_id": [2, UNCLASSIFIED_TID, FILTERED_TID, 9606],
+        "sample_1": [10, 1000, 50, 1], 
+    })
+    path = tmp_path / "special_alpha.parquet"
+    meta = get_standard_metadata("RAW_TABLE")
+    df.write_parquet(path)
+    save_companion_metadata(path, meta)
+    
+    out_path = tmp_path / "out_alpha_special.csv"
+    annotate_table_logic(
+        input_table=path,
+        taxonomy_dir=mock_taxonomy,
+        output_file=out_path,
+        sort_order="alphabetical"
+    )
+    
+    df_res = pl.read_csv(out_path)
+    tids = df_res["t_id"].to_list()
+    # Unclassified (0) then Filtered (4294967295) then Alphabetical Tree
+    assert tids[0] == UNCLASSIFIED_TID
+    assert tids[1] == FILTERED_TID
+    # Alphabetical order: Bacteria (2) then Eukaryota (9606)
+    assert tids[2:] == [2, 9606]
+
 def test_missing_tid_column(tmp_path, mock_taxonomy, base_table):
     bad_meta = tmp_path / "bad.csv"
     pl.DataFrame({"id": [1, 2], "val": ["A", "B"]}).write_csv(bad_meta)
