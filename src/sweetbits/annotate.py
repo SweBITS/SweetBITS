@@ -9,7 +9,7 @@ import click
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from joltax import JolTree
-from sweetbits.metadata import validate_sweetbits_parquet, get_standard_metadata, write_parquet_with_metadata
+from sweetbits.metadata import validate_sweetbits_file, get_standard_metadata, save_companion_metadata
 from sweetbits.utils import FILTERED_TID
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ def annotate_table_logic(
     data_standard = "GENERIC"
     
     if ext == ".parquet":
-        metadata = validate_sweetbits_parquet(
+        metadata = validate_sweetbits_file(
             input_table, 
             expected_type="RAW_TABLE", 
             required_columns=["t_id"]
@@ -71,10 +71,21 @@ def annotate_table_logic(
         data_standard = metadata.get("data_standard", "GENERIC")
         df = pl.read_parquet(input_table)
     else:
-        click.secho(
-            f"Warning: Reading from {ext.upper()}. Provenance metadata and version safety checks are disabled.", 
-            fg="yellow", err=True
-        )
+        # For CSV and TSV, try to validate the companion file if it exists
+        try:
+            metadata = validate_sweetbits_file(
+                input_table, 
+                expected_type="RAW_TABLE", 
+                required_columns=["t_id"]
+            )
+            data_standard = metadata.get("data_standard", "GENERIC")
+        except FileNotFoundError:
+            click.secho(
+                f"Warning: Reading from {ext.upper()} without a companion metadata JSON file. "
+                "Provenance metadata and version safety checks are bypassed.", 
+                fg="yellow", err=True
+            )
+        
         if ext == ".tsv":
             df = pl.read_csv(input_table, separator="\t")
         else:
@@ -203,18 +214,21 @@ def annotate_table_logic(
 
     # 7. Output Generation
     out_ext = output_file.suffix.lower()
+    meta = get_standard_metadata(
+        "ANNOTATED_TABLE", 
+        source_path=input_table, 
+        sorting="Taxonomic Hierarchy", 
+        data_standard=data_standard
+    )
+    
     if out_ext == ".parquet":
-        meta = get_standard_metadata(
-            "ANNOTATED_TABLE", 
-            source_path=input_table, 
-            sorting="Taxonomic Hierarchy", 
-            data_standard=data_standard
-        )
-        write_parquet_with_metadata(df, output_file, meta)
+        df.write_parquet(output_file)
     elif out_ext == ".tsv":
         df.write_csv(output_file, separator="\t")
     else:
         df.write_csv(output_file)
+
+    save_companion_metadata(output_file, meta)
 
     return {
         "taxa_processed": num_taxa,

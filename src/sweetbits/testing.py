@@ -9,7 +9,7 @@ import random
 from typing import Optional, List
 from pathlib import Path
 from sweetbits.utils import parse_sample_id
-from sweetbits.metadata import get_standard_metadata, write_parquet_with_metadata
+from sweetbits.metadata import get_standard_metadata, save_companion_metadata
 
 # ... (Existing generate_mock_kraken_parquet and others) ...
 
@@ -88,7 +88,8 @@ def generate_mock_kraken_parquet(
             file_type="KRAKEN_PARQUET", source_path=output_path, 
             compression="Uncompressed", sorting="t_id", data_standard="SWEBITS"
         )
-        write_parquet_with_metadata(df, output_path, metadata)
+        df.write_parquet(output_path)
+        save_companion_metadata(output_path, metadata)
     return df
 
 def generate_mock_report_parquet(
@@ -116,7 +117,8 @@ def generate_mock_report_parquet(
             file_type="REPORT_PARQUET", source_path=Path.cwd(), 
             compression="Uncompressed", sorting="year, week, sample_id, t_id", data_standard="SWEBITS"
         )
-        write_parquet_with_metadata(df, output_path, metadata)
+        df.write_parquet(output_path)
+        save_companion_metadata(output_path, metadata)
     return df
 
 def generate_mock_taxonomy(output_dir: Path):

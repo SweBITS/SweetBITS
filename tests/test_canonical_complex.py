@@ -8,7 +8,7 @@ import polars as pl
 import numpy as np
 from pathlib import Path
 from sweetbits.tables import generate_table_logic
-from sweetbits.metadata import write_parquet_with_metadata, get_standard_metadata
+from sweetbits.metadata import save_companion_metadata, get_standard_metadata
 from joltax import JolTree
 
 @pytest.fixture
@@ -62,7 +62,8 @@ def test_canonical_deep_nesting(complex_taxonomy, tmp_path):
     
     report_parquet = tmp_path / "deep.parquet"
     meta = get_standard_metadata("REPORT_PARQUET", source_path=tmp_path, data_standard="SWEBITS")
-    write_parquet_with_metadata(data, report_parquet, meta)
+    data.write_parquet(report_parquet)
+    save_companion_metadata(report_parquet, meta)
     
     out = tmp_path / "out.tsv"
     generate_table_logic(report_parquet, out, mode="canonical", taxonomy_dir=complex_taxonomy, min_observed=0, min_reads=0)
@@ -90,7 +91,8 @@ def test_canonical_broad_non_canonical_parent(complex_taxonomy, tmp_path):
     
     report_parquet = tmp_path / "broad.parquet"
     meta = get_standard_metadata("REPORT_PARQUET", source_path=tmp_path, data_standard="SWEBITS")
-    write_parquet_with_metadata(data, report_parquet, meta)
+    data.write_parquet(report_parquet)
+    save_companion_metadata(report_parquet, meta)
     
     out = tmp_path / "out_broad.tsv"
     generate_table_logic(report_parquet, out, mode="canonical", taxonomy_dir=complex_taxonomy, min_observed=0, min_reads=0)
@@ -115,7 +117,8 @@ def test_canonical_adjacent_ranks(complex_taxonomy, tmp_path):
     
     report_parquet = tmp_path / "adjacent.parquet"
     meta = get_standard_metadata("REPORT_PARQUET", source_path=tmp_path, data_standard="SWEBITS")
-    write_parquet_with_metadata(data, report_parquet, meta)
+    data.write_parquet(report_parquet)
+    save_companion_metadata(report_parquet, meta)
     
     out = tmp_path / "out_adj.tsv"
     generate_table_logic(report_parquet, out, mode="canonical", taxonomy_dir=complex_taxonomy, min_observed=0, min_reads=0)

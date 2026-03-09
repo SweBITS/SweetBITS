@@ -277,21 +277,34 @@ def annotate(input_table, taxonomy, output, metadata, cores, overwrite):
         click.secho(f"Error: {str(e)}", fg="red", err=True)
         sys.exit(1)
 
-@main.command(name="inspect", short_help="Show metadata of a SweetBITS parquet file.")
-@click.argument("parquet_file", type=click.Path(exists=True, path_type=Path))
-def inspect(parquet_file):
+@main.command(name="inspect", short_help="Show metadata of a SweetBITS file via its JSON companion.")
+@click.argument("target_file", type=click.Path(exists=True, path_type=Path))
+def inspect(target_file):
     """
-    Prints the global metadata stored in a SweetBITS-generated Parquet file
-    (<KRAKEN_PARQUET> or <REPORTS_PARQUET>).
+    Prints the global provenance metadata stored in a SweetBITS-generated JSON companion file.
+    Works for any SweetBITS output (e.g., Parquet, CSV, TSV).
     """
+    from sweetbits.metadata import read_companion_metadata
+
     print_splash()
     try:
-        metadata = read_parquet_metadata(parquet_file)
-        if not metadata:
-            click.echo("No SweetBITS metadata found in this file.")
-            return
+        # If the user pointed directly to the json file, use it as the base
+        if target_file.suffix == ".json":
+            data_file = target_file.with_name(target_file.name[:-5])
+        else:
+            data_file = target_file
 
-        click.echo(click.style("Inspecting: ", fg="cyan") + click.style(parquet_file.name, fg="cyan", bold=True))
+        metadata = read_companion_metadata(data_file)
+        
+        if not metadata:
+            click.secho(
+                f"Error: Missing companion metadata file '{data_file.name}.json'.\n"
+                "SweetBITS requires this JSON file to verify data integrity and provenance.", 
+                fg="red", err=True
+            )
+            sys.exit(1)
+
+        click.echo(click.style("Inspecting: ", fg="cyan") + click.style(f"{data_file.name}.json", fg="cyan", bold=True))
         click.echo("-" * 55)
         for key, value in metadata.items():
             display_key = key.replace("_", " ").title().replace("Sweetbits", "SweetBITS")

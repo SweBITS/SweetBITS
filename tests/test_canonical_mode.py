@@ -3,7 +3,7 @@ import polars as pl
 import numpy as np
 from pathlib import Path
 from sweetbits.tables import generate_table_logic
-from sweetbits.metadata import write_parquet_with_metadata, get_standard_metadata
+from sweetbits.metadata import save_companion_metadata, get_standard_metadata
 from joltax import JolTree
 
 @pytest.fixture
@@ -57,7 +57,8 @@ def canonical_setup(tmp_path):
     
     report_parquet = tmp_path / "report.parquet"
     meta = get_standard_metadata("REPORT_PARQUET", source_path=tmp_path, data_standard="SWEBITS")
-    write_parquet_with_metadata(report_data, report_parquet, meta)
+    report_data.write_parquet(report_parquet)
+    save_companion_metadata(report_parquet, meta)
     
     return {
         "parquet": report_parquet,

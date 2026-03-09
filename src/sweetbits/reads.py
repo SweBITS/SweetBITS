@@ -11,7 +11,7 @@ from typing import Optional, List, Dict, Any, IO, Tuple
 from collections import OrderedDict
 from joltax import JolTree
 from sweetbits.utils import parse_sample_id, get_sample_info
-from sweetbits.metadata import validate_sweetbits_parquet
+from sweetbits.metadata import validate_sweetbits_file
 
 def format_short_name(scientific_name: str) -> str:
     """
@@ -196,9 +196,9 @@ def extract_reads_logic(
                 if not is_in_temporal_range(info['year'], info['week'], year_start, week_start, year_end, week_end):
                     continue
 
-            # Validate metadata and columns
+            # Validate metadata and columns via JSON companion
             schema = pl.scan_parquet(pfile).collect_schema()
-            metadata = validate_sweetbits_parquet(pfile, expected_type="KRAKEN_PARQUET")
+            metadata = validate_sweetbits_file(pfile, expected_type="KRAKEN_PARQUET")
             has_fastq = metadata.get("has_fastq") == "True"
             
             required_cols = ["sample_id", "read_id", "t_id", "year", "week"]

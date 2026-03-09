@@ -12,7 +12,7 @@ from typing import Optional, List, Union, Dict, Any
 from joltax import JolTree
 from joltax.constants import CANONICAL_RANKS
 from sweetbits.utils import parse_sample_id, load_sample_id_list, FILTERED_TID
-from sweetbits.metadata import get_standard_metadata, write_parquet_with_metadata, read_parquet_metadata, validate_sweetbits_parquet
+from sweetbits.metadata import get_standard_metadata, save_companion_metadata, read_companion_metadata, validate_sweetbits_file
 
 from sweetbits.canonical import calculate_canonical_remainders
 
@@ -83,11 +83,12 @@ def generate_table_logic(
         import os
         os.environ["POLARS_MAX_THREADS"] = str(cores)
 
-    # 1. Validate Parquet and Read Metadata
+    # 1. Validate Parquet and Read Metadata via JSON Companion
     required_cols = ["sample_id", "t_id", "clade_reads", "taxon_reads"]
-    metadata = validate_sweetbits_parquet(input_parquet, expected_type="REPORT_PARQUET", required_columns=required_cols)
+    metadata = validate_sweetbits_file(input_parquet, expected_type="REPORT_PARQUET", required_columns=required_cols)
     data_standard = metadata.get("data_standard", "GENERIC")
     
+    # Lazy scan - Polars natively handles the Categorical sample_id column written by collect
     lf = pl.scan_parquet(input_parquet)
     
     # 2. Sample Filtering and Validation
@@ -264,15 +265,18 @@ def generate_table_logic(
         
     # 10. Output Generation
     ext = output_file.suffix.lower()
+    meta = get_standard_metadata("RAW_TABLE", source_path=input_parquet, sorting="t_id", data_standard=data_standard)
+    
     if ext == ".parquet":
-        meta = get_standard_metadata("RAW_TABLE", source_path=input_parquet, sorting="t_id", data_standard=data_standard)
-        write_parquet_with_metadata(table, output_file, meta)
+        table.write_parquet(output_file)
     elif ext == ".csv":
         table.write_csv(output_file)
     elif ext == ".tsv":
         table.write_csv(output_file, separator="\t")
     else:
         raise ValueError(f"Unsupported output format: {ext}")
+        
+    save_companion_metadata(output_file, meta)
         
     return {
         "data_standard": data_standard,

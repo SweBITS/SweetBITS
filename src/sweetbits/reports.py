@@ -8,7 +8,7 @@ import click
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Any
 from sweetbits.utils import parse_sample_id, get_sample_info
-from sweetbits.metadata import get_standard_metadata, write_parquet_with_metadata
+from sweetbits.metadata import get_standard_metadata, save_companion_metadata
 
 def detect_report_format(file_path: Path) -> str:
     """
@@ -107,8 +107,8 @@ def gather_reports_logic(
     1. Report Format: Differentiates between 'HYPERLOGLOG' (8-col) and 'LEGACY' (6-col).
     2. Data Standard: Differentiates between 'SWEBITS' and 'GENERIC'.
 
-    The final Parquet file is sorted for high-performance range queries and contains
-    comprehensive Arrow-level metadata for provenance tracking.
+    The final Parquet file is sorted for high-performance range queries and its
+    provenance is written to a JSON companion file.
 
     Args:
         input_dir       : Directory to scan for report files.
@@ -168,25 +168,27 @@ def gather_reports_logic(
     fill_char = click.style('#', fg='yellow')
     label = click.style("Collecting...", fg="cyan")
     
-    with click.progressbar(report_files, label=label, show_pos=True, color="cyan", fill_char=fill_char) as bar:
-        for i, file_path in enumerate(bar):
-            info = sample_metadata[i]
-            sample_id = info["sample_id"]
-            df = parse_kraken_report(file_path, report_format)
+    # Use StringCache to ensure Categorical encodings for sample_id are globally consistent
+    # across the entire concatenation process.
+    with pl.StringCache():
+        with click.progressbar(report_files, label=label, show_pos=True, color="cyan", fill_char=fill_char) as bar:
+            for i, file_path in enumerate(bar):
+                info = sample_metadata[i]
+                sample_id = info["sample_id"]
+                df = parse_kraken_report(file_path, report_format)
 
-            cols = {
-                "sample_id": pl.lit(sample_id, dtype=pl.String),
-                "source_file": pl.lit(str(file_path.relative_to(input_dir)), dtype=pl.String)
-            }
+                cols = {
+                    "sample_id": pl.lit(sample_id).cast(pl.Categorical)
+                }
 
-            if is_swebits:
-                cols["year"] = pl.lit(info["year"]).cast(pl.UInt16)
-                cols["week"] = pl.lit(info["week"]).cast(pl.UInt8)
+                if is_swebits:
+                    cols["year"] = pl.lit(info["year"]).cast(pl.UInt16)
+                    cols["week"] = pl.lit(info["week"]).cast(pl.UInt8)
 
-            df = df.with_columns(**cols)
-            dfs.append(df)
-        
-    merged_df = pl.concat(dfs)
+                df = df.with_columns(**cols)
+                dfs.append(df)
+            
+        merged_df = pl.concat(dfs)
     
     # 4. Finalize Schema and Sort
     sort_keys = ["year", "week", "sample_id", "t_id"] if is_swebits else ["sample_id", "t_id"]
@@ -194,7 +196,7 @@ def gather_reports_logic(
     click.secho(f"Sorting {merged_df.height:,} rows...", fg="cyan", err=True)
     merged_df = merged_df.sort(sort_keys)
     
-    # 5. Save with Metadata
+    # 5. Save Parquet natively with Polars, and write JSON companion metadata
     metadata = get_standard_metadata(
         file_type="REPORT_PARQUET", 
         source_path=input_dir,
@@ -205,13 +207,8 @@ def gather_reports_logic(
     )
     
     click.secho(f"Writing to {output_file.name}...", fg="cyan", err=True)
-    write_parquet_with_metadata(
-        merged_df, 
-        output_file, 
-        metadata, 
-        compression="zstd", 
-        compression_level=3
-    )
+    merged_df.write_parquet(output_file, compression="zstd", compression_level=3)
+    save_companion_metadata(output_file, metadata)
     
     click.secho(f"Done!", fg="cyan", err=True)
 

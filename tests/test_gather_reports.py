@@ -3,7 +3,7 @@ import polars as pl
 from pathlib import Path
 from sweetbits.testing import generate_mock_kraken_report_file
 from sweetbits.reports import gather_reports_logic
-from sweetbits.metadata import read_parquet_metadata
+from sweetbits.metadata import read_companion_metadata
 
 def test_gather_reports_logic_swebits(tmp_path):
     # Setup: Create a directory with two mock reports (SweBITS style)
@@ -25,7 +25,7 @@ def test_gather_reports_logic_swebits(tmp_path):
     
     assert output_parquet.exists()
     df = pl.read_parquet(output_parquet)
-    meta = read_parquet_metadata(output_parquet)
+    meta = read_companion_metadata(output_parquet)
     
     # Check Metadata
     assert meta["data_standard"] == "SWEBITS"
@@ -57,7 +57,7 @@ def test_gather_reports_logic_generic(tmp_path):
     
     assert output_parquet.exists()
     df = pl.read_parquet(output_parquet)
-    meta = read_parquet_metadata(output_parquet)
+    meta = read_companion_metadata(output_parquet)
     
     # Check Metadata
     assert meta["data_standard"] == "GENERIC"
@@ -66,6 +66,3 @@ def test_gather_reports_logic_generic(tmp_path):
     assert "year" not in df.columns
     assert "week" not in df.columns
     assert "sample_id" in df.columns
-    
-    # Check provenance
-    assert "SampleA.report" in df.filter(pl.col("sample_id") == "SampleA")["source_file"][0]

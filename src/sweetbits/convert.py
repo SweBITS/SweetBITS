@@ -8,15 +8,13 @@ import os
 import tempfile
 import click
 import polars as pl
-import pyarrow as pa
-import pyarrow.parquet as pq
 import gc
 import psutil
 from pathlib import Path
 from typing import Dict, Any, Optional, Iterator, Tuple
 
 from sweetbits.utils import parse_sample_id, get_sample_info
-from sweetbits.metadata import get_standard_metadata
+from sweetbits.metadata import get_standard_metadata, save_companion_metadata
 
 # Tweak Polars for large-scale data handling
 # Setting a smaller chunk size for streaming operations to reduce peak memory pressure
@@ -88,7 +86,7 @@ def convert_kraken_logic(
     Converts Kraken output and FASTQ files into a highly compressed, sorted KRAKEN_PARQUET.
     
     Uses a memory-safe two-pointer streaming algorithm for the Left Join, followed
-    by an out-of-core Rust/Polars sort phase.
+    by an out-of-core Polars sort phase.
 
     Args:
         kraken_file : Path to the Kraken read-by-read output (.txt or .gz).
@@ -167,129 +165,125 @@ def convert_kraken_logic(
     last_matched_id = "None"
     
     # 3. Schema Definition
-    # We strictly enforce datatypes at ingestion to minimize disk footprint
-    schema_fields = [
-        ("sample_id", pa.dictionary(pa.int32(), pa.string())),
-        ("read_id", pa.string()),
-        ("t_id", pa.uint32()),
-        ("mhg", pa.uint8()),
-        ("r1_len", pa.uint8()),
-        ("r2_len", pa.uint8()),
-        ("total_len", pa.uint16()),
-        ("kmer_string", pa.string())
-    ]
+    # We define Polars schema dict to explicitly construct DataFrames
+    schema_fields = {
+        "sample_id": pl.Categorical,
+        "read_id": pl.String,
+        "t_id": pl.UInt32,
+        "mhg": pl.UInt8,
+        "r1_len": pl.UInt8,
+        "r2_len": pl.UInt8,
+        "total_len": pl.UInt16,
+        "kmer_string": pl.String
+    }
     if data_standard == "SWEBITS":
-        schema_fields.append(("year", pa.uint16()))
-        schema_fields.append(("week", pa.uint8()))
+        schema_fields["year"] = pl.UInt16
+        schema_fields["week"] = pl.UInt8
         
     if has_fastq:
-        schema_fields.extend([
-            ("r1_seq", pa.string()),
-            ("r1_qual", pa.string()),
-            ("r2_seq", pa.string()),
-            ("r2_qual", pa.string())
-        ])
-        
-    schema = pa.schema(schema_fields)
+        schema_fields["r1_seq"] = pl.String
+        schema_fields["r1_qual"] = pl.String
+        schema_fields["r2_seq"] = pl.String
+        schema_fields["r2_qual"] = pl.String
 
-    # UI styling
-    fill_char = click.style('#', fg='yellow')
-    
     with tempfile.TemporaryDirectory() as tmpdir:
-        tmp_unsorted = Path(tmpdir) / "unsorted.parquet"
-        # Use snappy for intermediate files: fast, low CPU, reduces tmpfs/memory pressure
-        writer = pq.ParquetWriter(tmp_unsorted, schema, compression='snappy')
+        tmp_chunks_dir = Path(tmpdir) / "chunks"
+        tmp_chunks_dir.mkdir()
         
         # 4. Two-Pointer Streaming Logic
         # The Kraken file acts as the absolute source of truth. If a FASTQ read is missing 
         # (e.g., host depletion), we insert nulls but keep the taxonomic classification.
-        click.secho("Phase 1/3: Ingesting data and synchronizing streams...", fg="cyan", err=True)
+        click.secho("Phase 1/2: Ingesting data and synchronizing streams...", fg="cyan", err=True)
         try:
-            while True:
-                chunk_data = {f[0]: [] for f in schema_fields}
-                lines_read = 0
-                
-                while lines_read < CHUNK_SIZE:
-                    line = k_stream.readline()
-                    if not line:
+            chunk_idx = 0
+            # Use StringCache across ingestion and writing chunks so Categorical dicts are unified
+            with pl.StringCache():
+                while True:
+                    chunk_data = {col: [] for col in schema_fields}
+                    lines_read = 0
+                    
+                    while lines_read < CHUNK_SIZE:
+                        line = k_stream.readline()
+                        if not line:
+                            break
+                            
+                        lines_read += 1
+                        parts = line.rstrip('\n').split('\t')
+                        
+                        # Parse SweBITS/Kraken read-by-read format
+                        read_id = parts[1]
+                        t_id = int(parts[2])
+                        
+                        lens = parts[3].split('|')
+                        r1_len = int(lens[0])
+                        r2_len = int(lens[1]) if len(lens) > 1 else 0
+                        total_len = r1_len + r2_len
+                        
+                        try:
+                            mhg = int(parts[4])
+                        except (IndexError, ValueError):
+                            mhg = 0
+                            
+                        kmer_string = parts[5] if len(parts) > 5 else ""
+                        
+                        chunk_data["sample_id"].append(sample_id)
+                        chunk_data["read_id"].append(read_id)
+                        chunk_data["t_id"].append(t_id)
+                        chunk_data["mhg"].append(mhg)
+                        chunk_data["r1_len"].append(r1_len)
+                        chunk_data["r2_len"].append(r2_len)
+                        chunk_data["total_len"].append(total_len)
+                        chunk_data["kmer_string"].append(kmer_string)
+                        
+                        if data_standard == "SWEBITS":
+                            chunk_data["year"].append(year)
+                            chunk_data["week"].append(week)
+                            
+                        if has_fastq:
+                            r1_s, r1_q = None, None
+                            r2_s, r2_q = None, None
+                            
+                            # Left Join: Match FASTQ sequences if IDs align perfectly
+                            if curr_r1 and curr_r1[0] == read_id:
+                                _, r1_s, r1_q = curr_r1
+                                try:
+                                    curr_r1 = next(r1_iter)
+                                except StopIteration:
+                                    curr_r1 = None
+                                
+                                if curr_r2 and curr_r2[0] == read_id:
+                                    _, r2_s, r2_q = curr_r2
+                                    try:
+                                        curr_r2 = next(r2_iter)
+                                    except StopIteration:
+                                        curr_r2 = None
+                                
+                                matched_fastq_count += 1
+                                last_matched_id = read_id
+                                    
+                            chunk_data["r1_seq"].append(r1_s)
+                            chunk_data["r1_qual"].append(r1_q)
+                            chunk_data["r2_seq"].append(r2_s)
+                            chunk_data["r2_qual"].append(r2_q)
+                            
+                        records_processed += 1
+                    
+                    if lines_read == 0:
                         break
                         
-                    lines_read += 1
-                    parts = line.rstrip('\n').split('\t')
+                    # Create DataFrame and apply specific typing
+                    df = pl.DataFrame(chunk_data, schema_overrides=schema_fields, strict=False)
                     
-                    # Parse SweBITS/Kraken read-by-read format
-                    read_id = parts[1]
-                    t_id = int(parts[2])
+                    # Write snappy-compressed parquet chunk to tempdir
+                    chunk_path = tmp_chunks_dir / f"chunk_{chunk_idx:05d}.parquet"
+                    df.write_parquet(chunk_path, compression="snappy")
+                    chunk_idx += 1
                     
-                    lens = parts[3].split('|')
-                    r1_len = int(lens[0])
-                    r2_len = int(lens[1]) if len(lens) > 1 else 0
-                    total_len = r1_len + r2_len
-                    
-                    try:
-                        mhg = int(parts[4])
-                    except (IndexError, ValueError):
-                        mhg = 0
-                        
-                    kmer_string = parts[5] if len(parts) > 5 else ""
-                    
-                    chunk_data["sample_id"].append(sample_id)
-                    chunk_data["read_id"].append(read_id)
-                    chunk_data["t_id"].append(t_id)
-                    chunk_data["mhg"].append(mhg)
-                    chunk_data["r1_len"].append(r1_len)
-                    chunk_data["r2_len"].append(r2_len)
-                    chunk_data["total_len"].append(total_len)
-                    chunk_data["kmer_string"].append(kmer_string)
-                    
-                    if data_standard == "SWEBITS":
-                        chunk_data["year"].append(year)
-                        chunk_data["week"].append(week)
-                        
-                    if has_fastq:
-                        r1_s, r1_q = None, None
-                        r2_s, r2_q = None, None
-                        
-                        # Left Join: Match FASTQ sequences if IDs align perfectly
-                        if curr_r1 and curr_r1[0] == read_id:
-                            _, r1_s, r1_q = curr_r1
-                            try:
-                                curr_r1 = next(r1_iter)
-                            except StopIteration:
-                                curr_r1 = None
-                            
-                            if curr_r2 and curr_r2[0] == read_id:
-                                _, r2_s, r2_q = curr_r2
-                                try:
-                                    curr_r2 = next(r2_iter)
-                                except StopIteration:
-                                    curr_r2 = None
-                            
-                            matched_fastq_count += 1
-                            last_matched_id = read_id
-                                
-                        chunk_data["r1_seq"].append(r1_s)
-                        chunk_data["r1_qual"].append(r1_q)
-                        chunk_data["r2_seq"].append(r2_s)
-                        chunk_data["r2_qual"].append(r2_q)
-                        
-                    records_processed += 1
-                
-                if lines_read == 0:
-                    break
-                    
-                # Dictionary encode sample_id before creating table to match schema
-                chunk_data["sample_id"] = pa.array(chunk_data["sample_id"]).dictionary_encode()
-                
-                table = pa.Table.from_pydict(chunk_data, schema=schema)
-                writer.write_table(table)
-                
-                # Provide periodic feedback
-                if records_processed % 1_000_000 == 0:
-                    _log_mem(f"Ingested {records_processed//1_000_000}M reads")
+                    # Provide periodic feedback
+                    if records_processed % 1_000_000 == 0:
+                        _log_mem(f"Ingested {records_processed//1_000_000}M reads")
                 
         finally:
-            writer.close()
             k_stream.close()
             if k_proc: k_proc.wait()
             if r1_stream: r1_stream.close()
@@ -317,18 +311,18 @@ def convert_kraken_logic(
         gc.collect()
         _log_mem("After GC")
 
-        # 6. Phase 2: Sort (Out-of-Core)
+        # 6. Phase 2: Sort and Sinking (Out-of-Core)
         # Sort by TaxID to maximize Run-Length Encoding (RLE) during Parquet zstd compression.
         # We temporarily throttle cores during sort to cap memory-hungry per-thread buffers.
         sort_cores = min(cores if cores else os.cpu_count(), 4)
         orig_threads = os.environ.get("POLARS_MAX_THREADS")
         os.environ["POLARS_MAX_THREADS"] = str(sort_cores)
         
-        click.secho(f"Phase 2/3: Polars out-of-core sorting (throttled to {sort_cores} cores)...", fg="cyan", err=True)
-        tmp_sorted = Path(tmpdir) / "sorted.parquet"
-        lf = pl.scan_parquet(tmp_unsorted).sort("t_id")
-        # Use snappy for intermediate sorted file to save disk space and cache memory
-        lf.sink_parquet(tmp_sorted, compression="snappy")
+        click.secho(f"Phase 2/2: Polars out-of-core sorting and zstd compression (throttled to {sort_cores} cores)...", fg="cyan", err=True)
+        
+        with pl.StringCache():
+            lf = pl.scan_parquet(tmp_chunks_dir / "*.parquet").sort("t_id")
+            lf.sink_parquet(output_file, compression="zstd", compression_level=3)
         
         # Restore original thread count
         if orig_threads:
@@ -336,44 +330,19 @@ def convert_kraken_logic(
         else:
             del os.environ["POLARS_MAX_THREADS"]
 
-        # CRITICAL: Delete the unsorted file immediately to free up OS page cache / tmpfs RAM
-        if tmp_unsorted.exists():
-            tmp_unsorted.unlink()
+        _log_mem("End of Phase 2 (Output written)")
         
-        _log_mem("End of Phase 2 (Unsorted deleted)")
-        gc.collect()
-        _log_mem("After GC")
-
-        # 7. Phase 3: Metadata Injection & Final Compression
-        click.secho("Phase 3/3: Metadata injection and final zstd compression...", fg="cyan", err=True)
+        # Write the companion JSON metadata file
         meta = get_standard_metadata(
             file_type="KRAKEN_PARQUET",
             source_path=kraken_file,
-            compression="zstd",
+            compression="zstd (level 3)",
             sorting="t_id",
             data_standard=data_standard,
             report_format="UNKNOWN"
         )
         meta["has_fastq"] = "True" if has_fastq else "False"
-        
-        sorted_pf = pq.ParquetFile(tmp_sorted)
-        total_rows = sorted_pf.metadata.num_rows
-        
-        existing_meta = sorted_pf.schema_arrow.metadata or {}
-        merged_meta = {**existing_meta}
-        for k, v in meta.items():
-            merged_meta[k.encode()] = str(v).encode()
-            
-        new_schema = sorted_pf.schema_arrow.with_metadata(merged_meta)
-        
-        label = click.style("Compressing", fg="cyan")
-        with pq.ParquetWriter(output_file, new_schema, compression="zstd", compression_level=3) as final_writer:
-            with click.progressbar(length=total_rows, label=label, show_pos=True, color="cyan", fill_char=fill_char) as bar:
-                for batch in sorted_pf.iter_batches(batch_size=100_000):
-                    final_writer.write_batch(batch)
-                    bar.update(batch.num_rows)
-                    if bar.pos % 5_000_000 == 0:
-                        _log_mem(f"Compressed {bar.pos//1_000_000}M reads")
+        save_companion_metadata(output_file, meta)
 
     _log_mem("End of Conversion")
     return {

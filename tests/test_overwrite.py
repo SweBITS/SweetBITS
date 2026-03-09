@@ -11,7 +11,7 @@ from sweetbits.tables import generate_table_logic
 from sweetbits.reads import extract_reads_logic
 from sweetbits.annotate import annotate_table_logic
 from sweetbits.convert import convert_kraken_logic
-from sweetbits.metadata import get_standard_metadata, write_parquet_with_metadata
+from sweetbits.metadata import get_standard_metadata, save_companion_metadata
 
 @pytest.fixture
 def mock_report(tmp_path):
@@ -33,7 +33,8 @@ def mock_report_parquet(tmp_path, mock_report):
         "source_file": ["S1.report"]
     })
     meta = get_standard_metadata("REPORT_PARQUET", source_path=tmp_path)
-    write_parquet_with_metadata(df, pfile, meta)
+    df.write_parquet(pfile)
+    save_companion_metadata(pfile, meta)
     return pfile
 
 @pytest.fixture
@@ -57,7 +58,8 @@ def mock_kraken_parquet(tmp_path):
     })
     meta = get_standard_metadata("KRAKEN_PARQUET")
     meta["has_fastq"] = "True"
-    write_parquet_with_metadata(df, pfile, meta)
+    df.write_parquet(pfile)
+    save_companion_metadata(pfile, meta)
     return pfile
 
 def test_gather_reports_overwrite(tmp_path, mock_report):
@@ -89,7 +91,8 @@ def test_annotate_overwrite(tmp_path, mock_report_parquet):
     raw = tmp_path / "raw.parquet"
     df = pl.DataFrame({"t_id": [9606], "S1": [10]})
     meta = get_standard_metadata("RAW_TABLE")
-    write_parquet_with_metadata(df, raw, meta)
+    df.write_parquet(raw)
+    save_companion_metadata(raw, meta)
     
     out = tmp_path / "annotated.tsv"
     out.touch()

@@ -2,7 +2,7 @@ import pytest
 import polars as pl
 from pathlib import Path
 from sweetbits.annotate import annotate_table_logic
-from sweetbits.metadata import get_standard_metadata, write_parquet_with_metadata
+from sweetbits.metadata import get_standard_metadata, save_companion_metadata
 
 @pytest.fixture
 def mock_taxonomy(tmp_path):
@@ -20,7 +20,8 @@ def base_table(tmp_path):
     })
     path = tmp_path / "base.parquet"
     meta = get_standard_metadata("RAW_TABLE")
-    write_parquet_with_metadata(df, path, meta)
+    df.write_parquet(path)
+    save_companion_metadata(path, meta)
     return path
 
 @pytest.fixture
