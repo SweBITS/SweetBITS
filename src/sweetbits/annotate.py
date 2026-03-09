@@ -218,56 +218,78 @@ def annotate_table_logic(
         click.secho("Applying abundance-weighted DFS sorting...", fg="cyan", err=True)
         import numpy as np
 
-        # 5.1 Identify Active Clades
-        # Instead of processing all 3M+ nodes, we only look at TaxIDs in the table
-        # and their direct ancestors. This makes the DFS instantaneous.
+        # 5.1 Map initial weights to indices
         table_tid_means = dict(zip(df["t_id"].to_list(), df["mean_signal"].to_list()))
 
-        table_tids = np.array([tid for tid in table_tid_means.keys() if tid not in [UNCLASSIFIED_TID, FILTERED_TID]], dtype=np.uint32)
-        table_indices = tree._get_indices(table_tids)
-        valid_table_indices = table_indices[table_indices != -1]
+        # We only care about valid taxonomic IDs for the tree logic
+        valid_tids = np.array([tid for tid in table_tid_means.keys() if tid not in [UNCLASSIFIED_TID, FILTERED_TID]], dtype=np.uint32)
+        valid_indices = tree._get_indices(valid_tids)
+        mask_found = valid_indices != -1
 
-        # Build set of all indices that form the "active" subtree
-        active_indices_set = set()
-        for idx in valid_table_indices:
-            # Note: JolTree.get_lineage returns list of t_ids
-            lineage = tree.get_lineage(int(tree._index_to_id[idx]))
-            active_indices_set.update(tree._get_indices(np.array(lineage, dtype=np.uint32)))
-        
-        # Include self in the active set (get_lineage excludes self by default)
-        active_indices_set.update(valid_table_indices)
+        starting_indices = valid_indices[mask_found]
+        starting_tids = valid_tids[mask_found]
 
-        active_indices = sorted(list(active_indices_set))
         num_nodes = len(tree.parents)
         clade_weights = np.zeros(num_nodes, dtype=np.float64)
 
-        for idx in valid_table_indices:
-            clade_weights[idx] = table_tid_means[int(tree._index_to_id[idx])]
+        # Assign base weights
+        for tid, idx in zip(starting_tids, starting_indices):
+            clade_weights[idx] = table_tid_means[tid]
 
-        # Propagate weights up the tree (only through active indices)
-        # Sort active indices by depth descending for safe upward propagation
-        active_by_depth = sorted(active_indices, key=lambda x: tree.depths[x], reverse=True)
+        # 5.2 Vectorized Ancestor Discovery
+        # Find all nodes that are ancestors of our starting nodes in O(depth) loops (~40 loops)
+        # instead of O(N) loops. This eliminates the memory/time bottleneck.
+        is_active = np.zeros(num_nodes, dtype=bool)
+        is_active[starting_indices] = True
+
+        current_layer = starting_indices
+        while len(current_layer) > 0:
+            # Get parents of current layer
+            parents = tree.parents[current_layer]
+
+            # Filter out root self-loops (-1 or parent == child)
+            valid_parents = parents[(parents != -1) & (parents != current_layer)]
+
+            # Keep only the parents we haven't seen yet
+            new_parents = valid_parents[~is_active[valid_parents]]
+
+            # Mark them as active
+            is_active[new_parents] = True
+
+            # Move up a level
+            current_layer = np.unique(new_parents)
+
+        # 5.3 Weight Propagation (Sparse)
+        # Extract the active indices and sort them by depth (deepest first)
+        active_indices = np.where(is_active)[0]
+        active_depths = tree.depths[active_indices]
+
+        # Sort indices descending by depth
+        sort_order_depth = np.argsort(active_depths)[::-1]
+        active_by_depth = active_indices[sort_order_depth]
+
+        # Bubble up weights in a single pass
         for idx in active_by_depth:
             p_idx = tree.parents[idx]
-            if p_idx != idx and p_idx != -1:
+            if p_idx != idx and p_idx != -1 and is_active[p_idx]:
                 if mode == "clade":
                     clade_weights[p_idx] = max(clade_weights[p_idx], clade_weights[idx])
                 else:
                     clade_weights[p_idx] += clade_weights[idx]
 
-        # 5.2 Build Sparse Children List
+        # 5.4 Build Sparse Children List
         children = {idx: [] for idx in active_indices}
         for idx in active_indices:
             p_idx = tree.parents[idx]
             if p_idx != idx and p_idx != -1 and p_idx in children:
                 children[p_idx].append(idx)
 
-        # 5.3 Sort siblings by clade weight (descending)
+        # Sort siblings by clade weight (descending)
         for idx in children:
             if children[idx]:
                 children[idx].sort(key=lambda x: clade_weights[x], reverse=True)
 
-        # 5.4 Execute DFS Traversal
+        # 5.5 Execute DFS Traversal
         dfs_order = []
 
         # Prepend Unclassified and Filtered reads if present
@@ -276,7 +298,16 @@ def annotate_table_logic(
         if has_filtered:
             dfs_order.append(FILTERED_TID)
 
-        stack = [0] # JolTree root index is 0
+        # Start DFS from the global root (index 0) if it's active, otherwise start from the 
+        # highest level active nodes (in case the tree is fragmented)
+        if 0 in children:
+            stack = [0]
+        else:
+            # Find nodes with no active parent
+            roots = [idx for idx in active_indices if tree.parents[idx] not in children or tree.parents[idx] == idx]
+            roots.sort(key=lambda x: clade_weights[x], reverse=True)
+            stack = roots[::-1] # Reverse because stack pops from end
+
         visited_tids = set(dfs_order)
 
         while stack:
@@ -299,8 +330,7 @@ def annotate_table_logic(
         }).with_columns(pl.col("t_id").cast(pl.UInt32))
 
         df = df.join(order_df, on="t_id", how="left").sort("sort_index").drop("sort_index")
-    else: # Hierarchical Alphabetical
-        click.secho("Applying hierarchical taxonomic sort...", fg="cyan", err=True)
+    else: # Hierarchical Alphabetical        click.secho("Applying hierarchical taxonomic sort...", fg="cyan", err=True)
         sort_cols_target = [
             "t_domain", "t_superkingdom", "t_phylum", "t_class", "t_order", 
             "t_family", "t_genus", "t_species", "t_id"
