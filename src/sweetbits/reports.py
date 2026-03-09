@@ -97,6 +97,7 @@ def gather_reports_logic(
     output_file: Path,
     recursive: bool = True,
     include_pattern: str = "*.report",
+    cores: Optional[int] = None,
     overwrite: bool = False
 ) -> Dict[str, Any]:
     """
@@ -114,6 +115,7 @@ def gather_reports_logic(
         output_file     : Path to the output Parquet file.
         recursive       : Whether to search subdirectories. Defaults to True.
         include_pattern : Glob pattern to match files. Defaults to "*.report".
+        cores           : Number of threads to assign to Polars.
         overwrite       : Whether to overwrite the output file if it exists.
 
     Returns:
@@ -130,6 +132,10 @@ def gather_reports_logic(
     """
     if output_file.exists() and not overwrite:
         raise FileExistsError(f"Output file '{output_file}' already exists. Use --overwrite to replace it.")
+
+    if cores:
+        import os
+        os.environ["POLARS_MAX_THREADS"] = str(cores)
 
     click.secho(f"Looking for report files in {input_dir}...", fg="cyan", err=True)
     search_path = "**/" + include_pattern if recursive else include_pattern

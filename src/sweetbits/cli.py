@@ -114,8 +114,9 @@ def produce():
 @click.option("--output", "-o", type=click.Path(path_type=Path), required=True, help="Path to output Parquet file.")
 @click.option("--recursive/--no-recursive", default=True, help="Search subdirectories (Default: True).")
 @click.option("--include", "-i", default="*.report", help="Pattern to match report files (Default: *.report).")
+@click.option("--cores", type=int, help="Number of CPU cores to use (Default: all available).")
 @click.option("--overwrite", is_flag=True, help="Overwrite output file if it exists.")
-def collect_kraken_reports(directory, output, recursive, include, overwrite):
+def collect_kraken_reports(directory, output, recursive, include, cores, overwrite):
     """
     Finds and merges multiple 8-column Kraken reports into a single Parquet file. Output is <REPORTS_PARQUET>.
     """
@@ -131,6 +132,7 @@ def collect_kraken_reports(directory, output, recursive, include, overwrite):
             output_file=output,
             recursive=recursive,
             include_pattern=include,
+            cores=cores,
             overwrite=overwrite
         )
         summary["status"] = "Success"
