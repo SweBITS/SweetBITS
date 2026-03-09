@@ -109,7 +109,7 @@ def produce():
     pass
 
 @kraken.command(name="reports", short_help="Merge Kraken reports into a single Parquet file (<REPORTS_PARQUET>).")
-@click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument("directory", type=click.Path(exists=True, path_type=Path))
 @click.option("--output", "-o", type=click.Path(path_type=Path), required=True, help="Path to output Parquet file.")
 @click.option("--recursive/--no-recursive", default=True, help="Search subdirectories (Default: True).")
 @click.option("--include", "-i", default="*.report", help="Pattern to match report files (Default: *.report).")
@@ -117,7 +117,8 @@ def produce():
 @click.option("--overwrite", is_flag=True, help="Overwrite output file if it exists.")
 def collect_kraken_reports(directory, output, recursive, include, cores, overwrite):
     """
-    Finds and merges multiple 8-column Kraken reports into a single Parquet file. Output is <REPORTS_PARQUET>.
+    Finds and merges multiple 8-column Kraken reports into a single Parquet file. 
+    Output is a <REPORTS_PARQUET> with an accompanying JSON metadata companion file.
     """
     start_time = time.time()
     ctx = click.get_current_context()
