@@ -80,6 +80,12 @@ def write_parquet_with_metadata(df: 'pl.DataFrame', output_path: Path, metadata:
         
     new_schema = table.schema.with_metadata(merged_meta)
     table = table.cast(new_schema)
+    
+    # Force Parquet 1.0 format to ensure Polars' Rust engine can cleanly read
+    # Dictionary/Categorical columns without hitting "Plain-encoded" fallback errors.
+    if 'version' not in kwargs:
+        kwargs['version'] = '1.0'
+        
     pq.write_table(table, output_path, **kwargs)
 
 def read_parquet_metadata(file_path: Path) -> Dict[str, str]:
