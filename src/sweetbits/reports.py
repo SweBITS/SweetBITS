@@ -168,27 +168,25 @@ def gather_reports_logic(
     fill_char = click.style('#', fg='yellow')
     label = click.style("Collecting...", fg="cyan")
     
-    # Use StringCache to ensure Categorical consistency during concat
-    with pl.StringCache():
-        with click.progressbar(report_files, label=label, show_pos=True, color="cyan", fill_char=fill_char) as bar:
-            for i, file_path in enumerate(bar):
-                info = sample_metadata[i]
-                sample_id = info["sample_id"]
-                df = parse_kraken_report(file_path, report_format)
+    with click.progressbar(report_files, label=label, show_pos=True, color="cyan", fill_char=fill_char) as bar:
+        for i, file_path in enumerate(bar):
+            info = sample_metadata[i]
+            sample_id = info["sample_id"]
+            df = parse_kraken_report(file_path, report_format)
 
-                cols = {
-                    "sample_id": pl.lit(sample_id).cast(pl.Categorical),
-                    "source_file": pl.lit(str(file_path.relative_to(input_dir))).cast(pl.Categorical)
-                }
+            cols = {
+                "sample_id": pl.lit(sample_id, dtype=pl.String),
+                "source_file": pl.lit(str(file_path.relative_to(input_dir)), dtype=pl.String)
+            }
 
-                if is_swebits:
-                    cols["year"] = pl.lit(info["year"]).cast(pl.UInt16)
-                    cols["week"] = pl.lit(info["week"]).cast(pl.UInt8)
+            if is_swebits:
+                cols["year"] = pl.lit(info["year"]).cast(pl.UInt16)
+                cols["week"] = pl.lit(info["week"]).cast(pl.UInt8)
 
-                df = df.with_columns(**cols)
-                dfs.append(df)
-            
-        merged_df = pl.concat(dfs)
+            df = df.with_columns(**cols)
+            dfs.append(df)
+        
+    merged_df = pl.concat(dfs)
     
     # 4. Finalize Schema and Sort
     sort_keys = ["year", "week", "sample_id", "t_id"] if is_swebits else ["sample_id", "t_id"]
