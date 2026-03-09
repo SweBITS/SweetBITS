@@ -81,10 +81,11 @@ def write_parquet_with_metadata(df: 'pl.DataFrame', output_path: Path, metadata:
     new_schema = table.schema.with_metadata(merged_meta)
     table = table.cast(new_schema)
     
-    # Disable PyArrow's dictionary encoding to prevent Polars reader crashes.
-    # We will cast back to Categorical lazily upon reading.
-    if 'use_dictionary' not in kwargs:
-        kwargs['use_dictionary'] = False
+    # Force Parquet 1.0 format to ensure Polars' Rust engine can cleanly read
+    # Dictionary/Categorical columns without hitting "Plain-encoded" fallback errors
+    # in newer Parquet 2.4/2.6 specifications.
+    if 'version' not in kwargs:
+        kwargs['version'] = '1.0'
         
     pq.write_table(table, output_path, **kwargs)
 

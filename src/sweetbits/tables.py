@@ -88,13 +88,7 @@ def generate_table_logic(
     metadata = validate_sweetbits_parquet(input_parquet, expected_type="REPORT_PARQUET", required_columns=required_cols)
     data_standard = metadata.get("data_standard", "GENERIC")
     
-    # Lazy scan and instantly cast sample_id back to Categorical to save memory.
-    # (We save them as strings via PyArrow to avoid a bug* in Polars' Rust Parquet reader).
-    # *: "Error: parquet: Not yet supported: Decoding ByteArray "Plain"-encoded optional parquet pages not yet supported"
-    with pl.StringCache():
-        lf = pl.scan_parquet(input_parquet).with_columns(
-            pl.col("sample_id").cast(pl.Categorical)
-        )
+    lf = pl.scan_parquet(input_parquet)
     
     # 2. Sample Filtering and Validation
     # Execute ONE quick scan of just the sample IDs to power validation and math
