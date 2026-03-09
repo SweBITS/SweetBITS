@@ -204,7 +204,17 @@ def annotate_table_logic(
         "t_family", "t_genus", "t_species", "t_id"
     ]
     actual_sort_cols = [c for c in sort_cols_target if c in df.columns]
-    df = df.sort(actual_sort_cols, nulls_last=True)
+    
+    # Use case-insensitive sorting for string columns to avoid ASCII E < d issues
+    sort_exprs = []
+    for c in actual_sort_cols:
+        if c == "t_id":
+            sort_exprs.append(pl.col(c))
+        else:
+            # We lowercase the string for sorting purposes only
+            sort_exprs.append(pl.col(c).cast(pl.Utf8).str.to_lowercase())
+            
+    df = df.sort(sort_exprs, nulls_last=True)
 
     # 6. Column Ordering
     ordered_cols = tax_cols + metadata_cols + ["mean_signal"] + sample_cols
