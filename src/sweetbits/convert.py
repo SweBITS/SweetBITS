@@ -297,19 +297,50 @@ def convert_kraken_logic(
             if r2_stream: r2_stream.close()
             if r2_proc: r2_proc.wait()
 
+        # 5. Synchronicity Audit
+        # If the Kraken file is exhausted but FASTQ files still have reads, 
+        # the pipelines drifted out of sync upstream.
+        if has_fastq and (curr_r1 is not None or curr_r2 is not None):
+            msg = (
+                "FASTQ files are out of sync with the Kraken report or contain extra reads. "
+                f"Total Kraken reads processed: {records_processed}. "
+                f"FASTQ reads successfully matched: {matched_fastq_count}. "
+                f"Last matched Read ID: '{last_matched_id}'. "
+            )
+            if curr_r1:
+                msg += f"First unmatched FASTQ ID: '{curr_r1[0]}'. "
+            
+            msg += "Ensure downstream tools (depletion/cleaning) preserved read order and did not add new reads."
+            raise RuntimeError(msg)
+
         _log_mem("End of Phase 1")
         gc.collect()
         _log_mem("After GC")
 
         # 6. Phase 2: Sort (Out-of-Core)
-        # Sort by TaxID to maximize Run-Length Encoding (RLE) during Parquet zstd compression
-        click.secho("Phase 2/3: Polars out-of-core sorting...", fg="cyan", err=True)
+        # Sort by TaxID to maximize Run-Length Encoding (RLE) during Parquet zstd compression.
+        # We temporarily throttle cores during sort to cap memory-hungry per-thread buffers.
+        sort_cores = min(cores if cores else os.cpu_count(), 4)
+        orig_threads = os.environ.get("POLARS_MAX_THREADS")
+        os.environ["POLARS_MAX_THREADS"] = str(sort_cores)
+        
+        click.secho(f"Phase 2/3: Polars out-of-core sorting (throttled to {sort_cores} cores)...", fg="cyan", err=True)
         tmp_sorted = Path(tmpdir) / "sorted.parquet"
         lf = pl.scan_parquet(tmp_unsorted).sort("t_id")
-        # Ensure we use streaming for the sort-to-disk phase
-        lf.sink_parquet(tmp_sorted, compression="uncompressed")
+        # Use snappy for intermediate sorted file to save disk space and cache memory
+        lf.sink_parquet(tmp_sorted, compression="snappy")
         
-        _log_mem("End of Phase 2")
+        # Restore original thread count
+        if orig_threads:
+            os.environ["POLARS_MAX_THREADS"] = orig_threads
+        else:
+            del os.environ["POLARS_MAX_THREADS"]
+
+        # CRITICAL: Delete the unsorted file immediately to free up OS page cache / tmpfs RAM
+        if tmp_unsorted.exists():
+            tmp_unsorted.unlink()
+        
+        _log_mem("End of Phase 2 (Unsorted deleted)")
         gc.collect()
         _log_mem("After GC")
 
