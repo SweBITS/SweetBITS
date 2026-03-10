@@ -119,8 +119,15 @@ def _print_audit_report(
     click.secho("-" * 80, fg="bright_black", err=True)
     
     row_str = f"{final_taxa_count}"
+    parts = []
     if produced_synthetic:
-         row_str += " (+1 synthetic 'Filtered' row)"
+         parts.append("1 synthetic 'Filtered' row")
+    if has_unclass:
+         parts.append("1 unclassified row")
+    
+    if parts:
+        row_str += f" (incl. {', '.join(parts)})"
+        
     click.secho(f"Rows (Taxa)           : {row_str}", err=True)
     click.secho(f"Columns (Samples)     : {num_sample_cols}\n", err=True)
     click.secho("="*80 + "\n", fg="bright_black", err=True)
@@ -171,6 +178,7 @@ def generate_table_logic(
                             for accurate relative abundance calculations.
         cores             : Number of CPU cores to use for Polars operations.
         overwrite         : Whether to overwrite the output file if it exists.
+        dry_run           : If True, prints the audit report and returns without saving.
 
     Returns:
         A dictionary containing processing statistics:
@@ -253,13 +261,14 @@ def generate_table_logic(
         true_totals = dict(zip(totals_df[pkey].to_list(), totals_df["total_reads"].to_list()))
 
     # 4. Taxonomic Filtering (JolTax Integration)
-    # Load the taxonomy tree if required for the specified mode or clade filter.
+    # Load the taxonomy tree if taxonomy_dir is provided to enable clade filtering,
+    # canonical mode, or rank-based audit reports.
     tree = None
-    if mode == "canonical" or clade_filter is not None:
+    if taxonomy_dir:
         click.secho("Loading JolTax taxonomy tree...", fg="cyan", err=True)
-        if not taxonomy_dir:
-            raise ValueError(f"Taxonomy directory is required for mode '{mode}' or clade filtering.")
         tree = JolTree.load(str(taxonomy_dir))
+    elif mode == "canonical" or clade_filter is not None:
+        raise ValueError(f"Taxonomy directory is required for mode '{mode}' or clade filtering.")
         
     if clade_filter is not None:
         click.secho(f"Applying clade filter for TaxID {clade_filter}...", fg="cyan", err=True)
