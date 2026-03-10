@@ -61,16 +61,14 @@ def _print_audit_report(
         click.secho("[ 2 ] Read Retention", fg="cyan", bold=True, err=True)
         click.secho("-" * 80, fg="bright_black", err=True)
         
-        # In clade mode, reads are cumulative so summing the table is mathematically invalid.
+        click.secho(f"Total Reads (Base)    : {baseline_reads:,}", err=True)
+        filtered_out = baseline_reads - retained_reads
+        click.secho(f"Filtered Out          : {filtered_out:,}", err=True)
+        read_pct = (retained_reads / baseline_reads * 100) if baseline_reads > 0 else 0
+        click.secho(f"Reads Retained        : {retained_reads:,} ({read_pct:.1f}%)", err=True)
+        
         if mode == "clade":
-            click.secho(f"Total Reads           : N/A (Clade mode is cumulative)", err=True)
-            click.secho(f"Reads Retained        : N/A (Clade mode is cumulative)", err=True)
-        else:
-            click.secho(f"Total Reads (Base)    : {baseline_reads:,}", err=True)
-            filtered_out = baseline_reads - retained_reads
-            click.secho(f"Filtered Out          : {filtered_out:,}", err=True)
-            read_pct = (retained_reads / baseline_reads * 100) if baseline_reads > 0 else 0
-            click.secho(f"Reads Retained        : {retained_reads:,} ({read_pct:.1f}%)", err=True)
+            click.secho("Note: Clade mode output is cumulative; table sum will exceed these values.", fg="bright_black", err=True)
         
         comp_status = "YES (Filtered reads retained in synthetic bin)" if produced_synthetic else "NO"
         
