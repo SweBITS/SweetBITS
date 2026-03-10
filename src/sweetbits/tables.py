@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional, List, Union, Dict, Any
 from joltax import JolTree
 from joltax.constants import CANONICAL_RANKS
-from sweetbits.utils import parse_sample_id, load_sample_id_list, FILTERED_TID
+from sweetbits.utils import parse_sample_id, load_sample_id_list, FILTERED_TID, UNCLASSIFIED_TID
 from sweetbits.metadata import get_standard_metadata, save_companion_metadata, read_companion_metadata, validate_sweetbits_file
 
 from sweetbits.canonical import calculate_canonical_remainders
@@ -31,7 +31,8 @@ def generate_table_logic(
     proportions: bool = False,
     keep_composition: bool = False,
     cores: Optional[int] = None,
-    overwrite: bool = False
+    overwrite: bool = False,
+    dry_run: bool = False
 ) -> Dict[str, Any]:
     """
     Generates a wide-format abundance table from a merged REPORT_PARQUET file.
@@ -217,9 +218,18 @@ def generate_table_logic(
         aggregate_function="sum"
     ).fill_null(0).sort("t_id")
     
+    # 6.5 Capture Baseline Metrics for Audit Report
+    baseline_taxa_count = table.height
+    base_tids = table["t_id"].to_list()
+    sample_cols = [c for c in table.columns if c != "t_id"]
+    
+    # Calculate baseline total reads before filtering (if not proportions)
+    baseline_reads = 0
+    if not proportions and sample_cols:
+        baseline_reads = table.select(pl.sum_horizontal(sample_cols).sum()).item()
+    
     # 7. Quality Control Filters
     # Apply minimum occupancy (--min-observed) and abundance (--min-reads) thresholds.
-    sample_cols = [c for c in table.columns if c != "t_id"]
     if sample_cols:
         if min_observed > 0:
             click.secho(f"Applying minimum required observations filter (min_observed >= {min_observed})...", fg="cyan", err=True)
@@ -234,10 +244,16 @@ def generate_table_logic(
                 pl.max_horizontal(sample_cols) >= min_reads
             )
             
+    # Calculate retained reads before keep-composition logic
+    retained_reads = 0
+    if not proportions and sample_cols:
+        retained_reads = table.select(pl.sum_horizontal(sample_cols).sum()).item()
+            
     # 8. Composition Preservation
     # If the user requested --keep-composition, we compare the current column sums
     # against the pre-calculated baseline totals. Any missing reads are bundled
     # into a synthetic "Filtered classified" bin to preserve the global sample size.
+    produced_synthetic = False
     if keep_composition and sample_cols:
         click.secho("Applying keep-composition logic to preserve mass balance...", fg="cyan", err=True)
         filtered_row = {"t_id": FILTERED_TID}
@@ -254,6 +270,7 @@ def generate_table_logic(
         if has_filtered:
             filtered_df = pl.DataFrame([filtered_row], schema=table.schema)
             table = pl.concat([table, filtered_df])
+            produced_synthetic = True
             
     # 9. Proportion Calculation
     # Convert raw counts to relative proportions if requested.
@@ -276,8 +293,113 @@ def generate_table_logic(
                 if total == 0: total = 1
                 exprs.append((pl.col(c) / total).alias(c))
             table = table.with_columns(exprs)
+            
+    # 10. Generate Audit Report
+    click.secho("\n" + "="*80, fg="bright_black", err=True)
+    if dry_run:
+        click.secho("                    SweetBITS Table Audit (--dry-run)", fg="yellow", bold=True, err=True)
+    else:
+        click.secho("                    SweetBITS Table Audit", fg="cyan", bold=True, err=True)
+    click.secho("="*80 + "\n", fg="bright_black", err=True)
+    
+    click.secho("[ 1 ] Data & Sample Overview", fg="cyan", bold=True, err=True)
+    click.secho("-" * 80, fg="bright_black", err=True)
+    click.secho(f"Input Parquet         : {input_parquet.name}", err=True)
+    click.secho(f"Total Samples in Data : {len(all_ids)}", err=True)
+    
+    excl_count = len(excluded_ids) if exclude_samples else 0
+    phantom_count = len(phantom_ids) if exclude_samples else 0
+    actual_excluded = excl_count - phantom_count
+    
+    click.secho(f"Samples Excluded      : {actual_excluded}", err=True)
+    samp_pct = (active_samples / len(all_ids) * 100) if all_ids else 0
+    click.secho(f"Samples Kept          : {active_samples} ({samp_pct:.1f}%)\n", err=True)
+
+    if not proportions:
+        click.secho("[ 2 ] Read Retention", fg="cyan", bold=True, err=True)
+        click.secho("-" * 80, fg="bright_black", err=True)
         
-    # 10. Output Generation
+        # In clade mode, reads are cumulative so summing the table is mathematically invalid.
+        if mode == "clade":
+            click.secho(f"Total Reads           : N/A (Clade mode is cumulative)", err=True)
+            click.secho(f"Reads Retained        : N/A (Clade mode is cumulative)", err=True)
+        else:
+            click.secho(f"Total Reads (Base)    : {baseline_reads:,}", err=True)
+            filtered_out = baseline_reads - retained_reads
+            click.secho(f"Filtered Out          : {filtered_out:,}", err=True)
+            read_pct = (retained_reads / baseline_reads * 100) if baseline_reads > 0 else 0
+            click.secho(f"Reads Retained        : {retained_reads:,} ({read_pct:.1f}%)", err=True)
+        
+        comp_status = "YES (Filtered reads retained in synthetic bin)" if produced_synthetic else "NO"
+        # The user's definition: composition is only truly intact if both Filtered AND Unclassified are present.
+        has_unclass = UNCLASSIFIED_TID in table["t_id"].to_list()
+        
+        if keep_composition and not has_unclass:
+             comp_status = "PARTIAL (Filtered reads kept, but Unclassified reads missing)"
+        
+        click.secho(f"Composition Intact    : {comp_status}", err=True)
+        click.secho(f"Unclassified Kept     : {'YES' if has_unclass else 'NO'}\n", err=True)
+
+    click.secho("[ 3 ] Taxonomic Retention", fg="cyan", bold=True, err=True)
+    click.secho("-" * 80, fg="bright_black", err=True)
+    
+    final_tids = table["t_id"].to_list()
+    final_taxa_count = table.height
+    
+    if tree:
+        # Calculate rank breakdown for original vs retained
+        import numpy as np
+        
+        def count_ranks(tids_list):
+            counts = {}
+            t_arr = np.array(tids_list, dtype=np.int32)
+            valid_idx = tree._get_indices(t_arr)
+            valid_idx = valid_idx[valid_idx != -1]
+            if len(valid_idx) > 0:
+                ranks = tree.ranks[valid_idx]
+                for r in ranks:
+                    r_name = tree.rank_names[r]
+                    counts[r_name] = counts.get(r_name, 0) + 1
+            return counts
+            
+        base_counts = count_ranks(base_tids)
+        final_counts = count_ranks(final_tids)
+        
+        display_ranks = [tree.top_rank] + CANONICAL_RANKS
+        
+        click.secho(f"{'Rank':<16} {'Original Count':<18} {'Retained Count':<18} {'Retention %':<12}", bold=True, err=True)
+        click.secho("-" * 80, fg="bright_black", err=True)
+        for rank in display_ranks:
+            if rank in base_counts:
+                o_c = base_counts[rank]
+                r_c = final_counts.get(rank, 0)
+                pct = (r_c / o_c * 100) if o_c > 0 else 0
+                click.secho(f"{rank.capitalize():<16} {o_c:<18} {r_c:<18} {pct:.1f}%", err=True)
+        click.secho("-" * 80, fg="bright_black", err=True)
+    
+    ret_pct = (final_taxa_count / baseline_taxa_count * 100) if baseline_taxa_count > 0 else 0
+    click.secho(f"{'Total Taxa':<16} {baseline_taxa_count:<18} {final_taxa_count:<18} {ret_pct:.1f}%\n", bold=True, err=True)
+
+    click.secho("[ 4 ] Final Table Shape", fg="cyan", bold=True, err=True)
+    click.secho("-" * 80, fg="bright_black", err=True)
+    
+    row_str = f"{final_taxa_count}"
+    if produced_synthetic:
+         row_str += " (+1 synthetic 'Filtered' row)"
+    click.secho(f"Rows (Taxa)           : {row_str}", err=True)
+    click.secho(f"Columns (Samples)     : {len(sample_cols)}\n", err=True)
+    click.secho("="*80 + "\n", fg="bright_black", err=True)
+    
+    if dry_run:
+        click.secho("Dry-run complete. Exiting without saving.", fg="yellow", bold=True, err=True)
+        return {
+            "data_standard": data_standard,
+            "active_samples": active_samples,
+            "rows_output": table.height,
+            "output_file": "DRY_RUN"
+        }
+        
+    # 11. Output Generation
     click.secho(f"Saving output to {output_file.name}...", fg="cyan", err=True)
     ext = output_file.suffix.lower()
     meta = get_standard_metadata("RAW_TABLE", source_path=input_parquet, sorting="t_id", data_standard=data_standard)

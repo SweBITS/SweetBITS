@@ -145,7 +145,7 @@ def collect_kraken_reports(directory, output, recursive, include, cores, overwri
 
 @produce.command(name="table", short_help="Generate abundance tables (<RAW_TABLE>) from merged reports (<REPORTS_PARQUET>).")
 @click.argument("input_parquet", type=click.Path(exists=True, path_type=Path))
-@click.option("--output", "-o", type=click.Path(path_type=Path), required=True, help="Path to output file (.csv, .tsv, .parquet).")
+@click.option("--output", "-o", type=click.Path(path_type=Path), required=False, help="Path to output file (.csv, .tsv, .parquet). Required unless --dry-run is used.")
 @click.option("--mode", "-m", type=click.Choice(["taxon", "clade", "canonical"]), default="clade", help="Abundance mode (Default: clade).")
 @click.option("--taxonomy", "-t", type=click.Path(path_type=Path), help="JolTax cache directory.")
 @click.option("--exclude-samples", type=click.Path(exists=True, path_type=Path), help="File with sample IDs to exclude.")
@@ -157,12 +157,19 @@ def collect_kraken_reports(directory, output, recursive, include, cores, overwri
 @click.option("--keep-composition", is_flag=True, help="Retain filtered reads as 'Filtered classified' to preserve global total reads. Forces --keep-unclassified.")
 @click.option("--cores", type=int, help="Number of CPU cores to use (Default: all available).")
 @click.option("--overwrite", is_flag=True, help="Overwrite output file if it exists.")
-def produce_table(input_parquet, output, mode, taxonomy, exclude_samples, min_observed, min_reads, clade, keep_unclassified, proportions, keep_composition, cores, overwrite):
+@click.option("--dry-run", is_flag=True, help="Print an audit report of filtering retention without saving the file.")
+def produce_table(input_parquet, output, mode, taxonomy, exclude_samples, min_observed, min_reads, clade, keep_unclassified, proportions, keep_composition, cores, overwrite, dry_run):
     """
     Outputs abundance tables with TaxIDs as rows and samples as columns.
     Supports filtering by clade, minimum occupancy, and read depth. Output is
     <RAW_TABLE>.
     """
+    if not output and not dry_run:
+        raise click.UsageError("Missing option '--output' / '-o'.")
+        
+    # Create a dummy path for dry-run if not provided to pass type checks
+    output_path = output if output else Path("dry_run_output.tmp")
+
     if keep_composition:
         keep_unclassified = True
 
@@ -175,7 +182,7 @@ def produce_table(input_parquet, output, mode, taxonomy, exclude_samples, min_ob
     try:
         summary = generate_table_logic(
             input_parquet=input_parquet,
-            output_file=output,
+            output_file=output_path,
             mode=mode,
             taxonomy_dir=taxonomy,
             exclude_samples=exclude_samples,
@@ -186,7 +193,8 @@ def produce_table(input_parquet, output, mode, taxonomy, exclude_samples, min_ob
             proportions=proportions,
             keep_composition=keep_composition,
             cores=cores,
-            overwrite=overwrite
+            overwrite=overwrite,
+            dry_run=dry_run
         )
         summary["status"] = "Success"
         print_footer(start_time, summary)

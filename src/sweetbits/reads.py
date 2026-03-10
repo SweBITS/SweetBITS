@@ -6,6 +6,7 @@ Logic for streaming and extracting reads from Kraken-annotated Parquet files.
 import polars as pl
 import gzip
 import os
+import click
 from pathlib import Path
 from typing import Optional, List, Dict, Any, IO, Tuple
 from collections import OrderedDict
