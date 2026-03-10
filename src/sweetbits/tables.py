@@ -108,6 +108,11 @@ def _print_audit_report(
         
         click.secho(f"{'Rank':<16} {'Original Count':<18} {'Retained Count':<18} {'Retention %':<12}", bold=True, err=True)
         click.secho("-" * 80, fg="bright_black", err=True)
+        
+        # Add Total Classified (distinct TaxIDs in tree)
+        total_taxa_pct = (final_taxa_count / baseline_taxa_count * 100) if baseline_taxa_count > 0 else 0
+        click.secho(f"{'Classified':<16} {baseline_taxa_count:<18} {final_taxa_count:<18} {total_taxa_pct:.1f}%", bold=True, err=True)
+        
         for rank in display_ranks:
             if rank in base_counts:
                 o_c = base_counts[rank]
@@ -116,14 +121,19 @@ def _print_audit_report(
                 click.secho(f"{rank.capitalize():<16} {o_c:<18} {r_c:<18} {pct:.1f}%", err=True)
         click.secho("-" * 80, fg="bright_black", err=True)
     
-    ret_pct = (final_taxa_count / baseline_taxa_count * 100) if baseline_taxa_count > 0 else 0
-    click.secho(f"{'Total Taxa':<16} {baseline_taxa_count:<18} {final_taxa_count:<18} {ret_pct:.1f}%\n", bold=True, err=True)
+    # Space between sections
+    click.echo("", err=True)
 
     if base_clade_reads is not None and retained_clade_reads is not None:
         click.secho("[ 4 ] Read Retention by Rank", fg="cyan", bold=True, err=True)
         click.secho("-" * 80, fg="bright_black", err=True)
         click.secho(f"{'Rank':<16} {'Original Reads':<18} {'Retained Reads':<18} {'Retention %':<12}", bold=True, err=True)
         click.secho("-" * 80, fg="bright_black", err=True)
+        
+        # Add Total Classified (taxon-based total reads)
+        total_reads_pct = (retained_reads / baseline_reads * 100) if baseline_reads > 0 else 0
+        click.secho(f"{'Classified':<16} {int(baseline_reads):<18,} {int(retained_reads):<18,} {total_reads_pct:.1f}%", bold=True, err=True)
+        
         for rank in display_ranks:
             if rank in base_clade_reads:
                 o_r = base_clade_reads[rank]
@@ -153,28 +163,34 @@ def _print_audit_report(
 
 def _aggregate_reads_by_rank(df: pl.DataFrame, tree: JolTree) -> Dict[str, float]:
     """Helper to sum clade reads for each canonical rank."""
-    # Sum across samples for each node
-    node_sums = df.group_by("t_id").agg(pl.col("clade_reads").sum())
+    # 1. Sum across samples for each node. 
+    # CRITICAL: Cast to UInt64 before sum to prevent 32-bit integer overflow on large datasets.
+    node_sums = df.group_by("t_id").agg(pl.col("clade_reads").cast(pl.UInt64).sum())
     
+    # 2. Extract to numpy and ensure parallel processing
     tids = node_sums["t_id"].to_numpy()
-    reads = node_sums["clade_reads"].to_numpy()
+    reads = node_sums["clade_reads"].to_numpy().astype(np.float64)
     
     counts = {}
-    valid_mask = tids < 2147483647
-    t_arr = np.array(tids[valid_mask], dtype=np.int32)
-    reads_arr = reads[valid_mask]
+    if len(tids) == 0:
+        return counts
+
+    # 3. Vectorized rank lookup
+    # Map input TaxIDs to internal tree indices
+    valid_idx = tree._get_indices(tids)
+    found_mask = valid_idx != -1
     
-    if len(t_arr) > 0:
-        valid_idx = tree._get_indices(t_arr)
-        found_mask = valid_idx != -1
+    # Filter to only taxa found in the tree
+    final_indices = valid_idx[found_mask]
+    final_reads = reads[found_mask]
+    
+    if len(final_indices) > 0:
+        # Retrieve ranks for all found nodes in one go
+        ranks = tree.ranks[final_indices]
         
-        found_idx = valid_idx[found_mask]
-        found_reads = reads_arr[found_mask]
-        
-        ranks = tree.ranks[found_idx]
-        
-        for r, read_count in zip(ranks, found_reads):
-            r_name = tree.rank_names[r]
+        # Accumulate sums by rank name
+        for r_idx, read_count in zip(ranks, final_reads):
+            r_name = tree.rank_names[r_idx]
             counts[r_name] = counts.get(r_name, 0.0) + read_count
             
     return counts
