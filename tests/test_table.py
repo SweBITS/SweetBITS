@@ -31,6 +31,7 @@ def test_table_taxon_mode(mock_data, tmp_path):
         input_parquet=mock_data["parquet"],
         output_file=output_csv,
         mode="taxon",
+        taxonomy_dir=mock_data["taxonomy"],
         min_observed=1,
         min_reads=1
     )
@@ -60,8 +61,8 @@ def test_table_clade_filter(mock_data, tmp_path):
     
     df = pl.read_csv(output_csv)
     # Should only have Bacteria descendants
-    # Mock ids: 5000000, 5000001, 5000002
-    assert all(tid in [5000000, 5000001, 5000002] for tid in df["t_id"])
+    # Mock ids: 2, 5000000, 5000001, 5000002
+    assert all(tid in [2, 5000000, 5000001, 5000002] for tid in df["t_id"])
     assert 9606 not in df["t_id"].to_list()
 
 def test_table_exclude_samples_with_phantom(mock_data, tmp_path):
@@ -80,6 +81,7 @@ def test_table_exclude_samples_with_phantom(mock_data, tmp_path):
         input_parquet=mock_data["parquet"],
         output_file=output_csv,
         mode="taxon",
+        taxonomy_dir=mock_data["taxonomy"],
         exclude_samples=exclude_file,
         min_observed=1,
         min_reads=1
@@ -102,6 +104,7 @@ def test_table_min_observed(mock_data, tmp_path):
         input_parquet=report_parquet,
         output_file=output_csv,
         mode="taxon", # Use taxon mode
+        taxonomy_dir=mock_data["taxonomy"],
         min_observed=2, # Must be in both 2022_20 and 2022_21
         min_reads=1
     )

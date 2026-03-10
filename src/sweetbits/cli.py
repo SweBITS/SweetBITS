@@ -147,7 +147,7 @@ def collect_kraken_reports(directory, output, recursive, include, cores, overwri
 @click.argument("input_parquet", type=click.Path(exists=True, path_type=Path))
 @click.option("--output", "-o", type=click.Path(path_type=Path), required=False, help="Path to output file (.csv, .tsv, .parquet). Required unless --dry-run is used.")
 @click.option("--mode", "-m", type=click.Choice(["taxon", "clade", "canonical"]), default="clade", help="Abundance mode (Default: clade).")
-@click.option("--taxonomy", "-t", type=click.Path(path_type=Path), help="JolTax cache directory.")
+@click.option("--taxonomy", "-t", type=click.Path(path_type=Path), required=True, help="JolTax cache directory.")
 @click.option("--exclude-samples", type=click.Path(exists=True, path_type=Path), help="File with sample IDs to exclude.")
 @click.option("--min-observed", type=int, default=25, help="Minimum samples taxon must be in (Default: 25).")
 @click.option("--min-reads", type=int, default=50, help="Minimum max reads across samples (Default: 50).")

@@ -12,7 +12,7 @@ from sweetbits.tables import generate_table_logic
 def test_validate_non_sweetbits_parquet(tmp_path):
     """Tests that a standard Parquet file (no metadata companion) fails validation."""
     pfile = tmp_path / "plain.parquet"
-    df = pl.DataFrame({"sample_id": ["S1"], "t_id": [1], "clade_reads": [10], "taxon_reads": [10]})
+    df = pl.DataFrame({"sample_id": ["S1"], "t_id": [1], "taxon_reads": [10]})
     df.write_parquet(pfile)
     
     with pytest.raises(FileNotFoundError, match="Missing companion metadata file"):
@@ -21,7 +21,7 @@ def test_validate_non_sweetbits_parquet(tmp_path):
 def test_validate_invalid_json_companion(tmp_path):
     """Tests that a companion file without a version fails."""
     pfile = tmp_path / "plain.parquet"
-    df = pl.DataFrame({"sample_id": ["S1"], "t_id": [1], "clade_reads": [10], "taxon_reads": [10]})
+    df = pl.DataFrame({"sample_id": ["S1"], "t_id": [1], "taxon_reads": [10]})
     df.write_parquet(pfile)
     import json
     with open(pfile.with_name(f"{pfile.name}.json"), "w") as f:
@@ -33,7 +33,7 @@ def test_validate_invalid_json_companion(tmp_path):
 def test_validate_wrong_type(tmp_path):
     """Tests that a SweetBITS file with the wrong type fails validation."""
     pfile = tmp_path / "wrong_type.parquet"
-    df = pl.DataFrame({"sample_id": ["S1"], "t_id": [1], "clade_reads": [10], "taxon_reads": [10]})
+    df = pl.DataFrame({"sample_id": ["S1"], "t_id": [1], "taxon_reads": [10]})
     meta = get_standard_metadata(file_type="KRAKEN_PARQUET")
     df.write_parquet(pfile)
     save_companion_metadata(pfile, meta)
@@ -68,7 +68,7 @@ def test_table_validation_integration(tmp_path):
 def test_validate_old_version(tmp_path):
     """Tests that a file older than the minimum compatible version fails validation."""
     pfile = tmp_path / "old.parquet"
-    df = pl.DataFrame({"sample_id": ["S1"], "t_id": [1], "clade_reads": [10], "taxon_reads": [10]})
+    df = pl.DataFrame({"sample_id": ["S1"], "t_id": [1], "taxon_reads": [10]})
     # Mocking metadata with an old version
     meta = get_standard_metadata(file_type="REPORT_PARQUET")
     meta["sweetbits_version"] = "0.0.1" 
@@ -81,7 +81,7 @@ def test_validate_old_version(tmp_path):
 def test_validate_future_version(tmp_path):
     """Tests that a file from a future version fails validation."""
     pfile = tmp_path / "future.parquet"
-    df = pl.DataFrame({"sample_id": ["S1"], "t_id": [1], "clade_reads": [10], "taxon_reads": [10]})
+    df = pl.DataFrame({"sample_id": ["S1"], "t_id": [1], "taxon_reads": [10]})
     meta = get_standard_metadata(file_type="REPORT_PARQUET")
     meta["sweetbits_version"] = "99.0.0" 
     df.write_parquet(pfile)

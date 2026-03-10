@@ -29,37 +29,12 @@ def simple_tax(tmp_path):
     tree.save(str(cache_dir))
     return cache_dir
 
-def test_mass_balance_failure(simple_tax, tmp_path):
-    """Tests that an inconsistent report triggers a RuntimeError."""
-    # Parent (10) has 100 reads.
-    # Child (100) has 120 reads (IMPOSSIBLE).
-    data = pl.DataFrame({
-        "sample_id": ["S1", "S1"],
-        "year": [2022, 2022], "week": [1, 1],
-        "t_id": [10, 100],
-        "clade_reads": [100, 120], # This breaks mass balance
-        "taxon_reads": [0, 120],
-        "mm_tot": [0, 0], "mm_uniq": [0, 0], "source_file": ["f", "f"]
-    }).with_columns([pl.col("year").cast(pl.UInt16), pl.col("week").cast(pl.UInt8), pl.col("t_id").cast(pl.UInt32)])
-    
-    report_parquet = tmp_path / "broken.parquet"
-    meta = get_standard_metadata("REPORT_PARQUET", source_path=tmp_path, data_standard="SWEBITS")
-    data.write_parquet(report_parquet)
-    save_companion_metadata(report_parquet, meta)
-    
-    out = tmp_path / "out.tsv"
-    
-    # This should raise RuntimeError during audit
-    with pytest.raises(RuntimeError, match="Mass balance check failed"):
-        generate_table_logic(report_parquet, out, mode="canonical", taxonomy_dir=simple_tax, min_observed=0, min_reads=0)
-
 def test_mass_balance_success(simple_tax, tmp_path):
     """Tests that a consistent report passes the audit."""
     data = pl.DataFrame({
         "sample_id": ["S1", "S1", "S1"],
         "year": [2022, 2022, 2022], "week": [1, 1, 1],
-        "t_id": [1, 10, 100],
-        "clade_reads": [100, 80, 50], # Consistent
+        "t_id": [1, 10, 100], # Consistent
         "taxon_reads": [20, 30, 50],
         "mm_tot": [0, 0, 0], "mm_uniq": [0, 0, 0], "source_file": ["f", "f", "f"]
     }).with_columns([pl.col("year").cast(pl.UInt16), pl.col("week").cast(pl.UInt8), pl.col("t_id").cast(pl.UInt32)])

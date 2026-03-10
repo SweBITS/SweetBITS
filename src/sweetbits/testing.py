@@ -104,12 +104,12 @@ def generate_mock_report_parquet(
         for tid in taxids:
             data.append({
                 "sample_id": sid, "year": info["year"], "week": info["week"], "t_id": tid,
-                "clade_reads": random.randint(100, 1000), "taxon_reads": random.randint(10, 100),
+                "taxon_reads": random.randint(10, 100),
                 "mm_tot": random.randint(1000, 5000), "mm_uniq": random.randint(500, 2000),
             })
     df = pl.DataFrame(data).with_columns([
         pl.col("year").cast(pl.UInt16), pl.col("week").cast(pl.UInt8), pl.col("t_id").cast(pl.UInt32),
-        pl.col("clade_reads").cast(pl.UInt32), pl.col("taxon_reads").cast(pl.UInt32),
+        pl.col("taxon_reads").cast(pl.UInt32),
         pl.col("mm_tot").cast(pl.UInt64), pl.col("mm_uniq").cast(pl.UInt32),
     ])
     if output_path:

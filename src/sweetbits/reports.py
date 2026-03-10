@@ -57,7 +57,7 @@ def parse_kraken_report(file_path: Path, report_format: str) -> pl.DataFrame:
     """
     if report_format == "HYPERLOGLOG":
         # Indices: pct=0, clade_reads=1, taxon_reads=2, mm_tot=3, mm_uniq=4, rank=5, t_id=6, name=7
-        keep_indices = [1, 2, 3, 4, 6]
+        keep_indices = [2, 3, 4, 6]
         # Schema MUST contain entries for all columns in the file, even if skipped.
         schema = {
             "column_1": pl.Float32, "column_2": pl.UInt32, "column_3": pl.UInt32,
@@ -65,18 +65,18 @@ def parse_kraken_report(file_path: Path, report_format: str) -> pl.DataFrame:
             "column_7": pl.UInt32, "column_8": pl.String,
         }
         new_names = {
-            "column_2": "clade_reads", "column_3": "taxon_reads", 
+            "column_3": "taxon_reads", 
             "column_4": "mm_tot", "column_5": "mm_uniq", "column_7": "t_id"
         }
     else: # LEGACY
         # Indices: pct=0, clade_reads=1, taxon_reads=2, rank=3, t_id=4, name=5
-        keep_indices = [1, 2, 4]
+        keep_indices = [2, 4]
         schema = {
             "column_1": pl.Float32, "column_2": pl.UInt32, "column_3": pl.UInt32,
             "column_4": pl.String, "column_5": pl.UInt32, "column_6": pl.String,
         }
         new_names = {
-            "column_2": "clade_reads", "column_3": "taxon_reads", "column_5": "t_id"
+            "column_3": "taxon_reads", "column_5": "t_id"
         }
 
     # Optimization: columns argument ensures Polars only allocates RAM for our subset.

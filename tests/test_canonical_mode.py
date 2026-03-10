@@ -42,7 +42,6 @@ def canonical_setup(tmp_path):
         "year": [2022, 2022, 2022, 2022],
         "week": [1, 1, 1, 1],
         "t_id": [1, 5000000, 555555, 5000001],
-        "clade_reads": [100, 35, 25, 20],
         "taxon_reads": [65, 10, 5, 20],
         "mm_tot": [0, 0, 0, 0],
         "mm_uniq": [0, 0, 0, 0],
@@ -51,7 +50,6 @@ def canonical_setup(tmp_path):
         pl.col("year").cast(pl.UInt16),
         pl.col("week").cast(pl.UInt8),
         pl.col("t_id").cast(pl.UInt32),
-        pl.col("clade_reads").cast(pl.UInt32),
         pl.col("taxon_reads").cast(pl.UInt32)
     ])
     

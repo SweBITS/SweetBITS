@@ -13,7 +13,7 @@ from joltax import JolTree
 from joltax.constants import CANONICAL_RANKS
 from sweetbits.utils import parse_sample_id, load_sample_id_list, FILTERED_TID, UNCLASSIFIED_TID
 from sweetbits.metadata import get_standard_metadata, save_companion_metadata, read_companion_metadata, validate_sweetbits_file
-
+from sweetbits.math import calc_clade_sum
 from sweetbits.canonical import calculate_canonical_remainders
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,9 @@ def _print_audit_report(
     final_tids: List[int],
     baseline_taxa_count: int,
     final_taxa_count: int,
-    num_sample_cols: int
+    num_sample_cols: int,
+    base_clade_reads: Optional[Dict[str, float]] = None,
+    retained_clade_reads: Optional[Dict[str, float]] = None
 ):
     """Prints the audit report for table generation."""
     click.secho("\n" + "="*80, fg="bright_black", err=True)
@@ -119,7 +121,21 @@ def _print_audit_report(
     ret_pct = (final_taxa_count / baseline_taxa_count * 100) if baseline_taxa_count > 0 else 0
     click.secho(f"{'Total Taxa':<16} {baseline_taxa_count:<18} {final_taxa_count:<18} {ret_pct:.1f}%\n", bold=True, err=True)
 
-    click.secho("[ 4 ] Final Table Shape", fg="cyan", bold=True, err=True)
+    if base_clade_reads and retained_clade_reads:
+        click.secho("[ 4 ] Read Retention by Rank", fg="cyan", bold=True, err=True)
+        click.secho("-" * 80, fg="bright_black", err=True)
+        click.secho(f"{'Rank':<16} {'Original Reads':<18} {'Retained Reads':<18} {'Retention %':<12}", bold=True, err=True)
+        click.secho("-" * 80, fg="bright_black", err=True)
+        for rank in display_ranks:
+            if rank in base_clade_reads:
+                o_r = base_clade_reads[rank]
+                r_r = retained_clade_reads.get(rank, 0.0)
+                pct = (r_r / o_r * 100) if o_r > 0 else 0
+                click.secho(f"{rank.capitalize():<16} {int(o_r):<18,} {int(r_r):<18,} {pct:.1f}%", err=True)
+        click.secho("-" * 80, fg="bright_black", err=True)
+        click.echo("\n", err=True)
+
+    click.secho("[ 5 ] Final Table Shape", fg="cyan", bold=True, err=True)
     click.secho("-" * 80, fg="bright_black", err=True)
     
     row_str = f"{final_taxa_count}"
@@ -135,6 +151,35 @@ def _print_audit_report(
     click.secho(f"Rows (Taxa)           : {row_str}", err=True)
     click.secho(f"Columns (Samples)     : {num_sample_cols}\n", err=True)
     click.secho("="*80 + "\n", fg="bright_black", err=True)
+
+
+def _aggregate_reads_by_rank(df: pl.DataFrame, tree: JolTree) -> Dict[str, float]:
+    """Helper to sum clade reads for each canonical rank."""
+    # Sum across samples for each node
+    node_sums = df.group_by("t_id").agg(pl.col("clade_reads").sum()).to_pandas()
+    
+    tids = node_sums["t_id"].to_numpy()
+    reads = node_sums["clade_reads"].to_numpy()
+    
+    counts = {}
+    valid_mask = tids < 2147483647
+    t_arr = np.array(tids[valid_mask], dtype=np.int32)
+    reads_arr = reads[valid_mask]
+    
+    if len(t_arr) > 0:
+        valid_idx = tree._get_indices(t_arr)
+        found_mask = valid_idx != -1
+        
+        found_idx = valid_idx[found_mask]
+        found_reads = reads_arr[found_mask]
+        
+        ranks = tree.ranks[found_idx]
+        
+        for r, read_count in zip(ranks, found_reads):
+            r_name = tree.rank_names[r]
+            counts[r_name] = counts.get(r_name, 0.0) + read_count
+            
+    return counts
 
 
 def generate_table_logic(
@@ -207,7 +252,7 @@ def generate_table_logic(
         os.environ["POLARS_MAX_THREADS"] = str(cores)
 
     # 1. Validate Parquet and Read Metadata via JSON Companion
-    required_cols = ["sample_id", "t_id", "clade_reads", "taxon_reads"]
+    required_cols = ["sample_id", "t_id", "taxon_reads"]
     metadata = validate_sweetbits_file(input_parquet, expected_type="REPORT_PARQUET", required_columns=required_cols)
     data_standard = metadata.get("data_standard", "GENERIC")
 
@@ -265,14 +310,13 @@ def generate_table_logic(
         true_totals = dict(zip(totals_df[pkey].to_list(), totals_df["total_reads"].to_list()))
 
     # 4. Taxonomic Filtering (JolTax Integration)
-    # Load the taxonomy tree if taxonomy_dir is provided to enable clade filtering,
-    # canonical mode, or rank-based audit reports.
-    tree = None
-    if taxonomy_dir:
-        click.secho("Loading JolTax taxonomy tree...", fg="cyan", err=True)
-        tree = JolTree.load(str(taxonomy_dir))
-    elif mode == "canonical" or clade_filter is not None:
-        raise ValueError(f"Taxonomy directory is required for mode '{mode}' or clade filtering.")
+    # The taxonomy tree is now required for ALL modes to support dynamic clade filtering,
+    # recursive filtering via calc_clade_sum, and rank-based audit reports.
+    if not taxonomy_dir:
+        raise ValueError("Taxonomy directory is required for table generation.")
+        
+    click.secho("Loading JolTax taxonomy tree...", fg="cyan", err=True)
+    tree = JolTree.load(str(taxonomy_dir))
         
     if clade_filter is not None:
         click.secho(f"Applying clade filter for TaxID {clade_filter}...", fg="cyan", err=True)
@@ -283,103 +327,103 @@ def generate_table_logic(
         click.secho("Filtering out unclassified reads...", fg="cyan", err=True)
         lf = lf.filter(pl.col("t_id") != 0)
         
-    # 5. Metric Aggregation
-    # Collect the necessary columns and perform the required mathematical transformations
-    # based on the requested abundance mode.
-    click.secho(f"Aggregating metrics for '{mode}' mode...", fg="cyan", err=True)
-    target_cols = ["t_id", "sample_id"]
+    # 5. Dynamic Clade Math & Filtering
+    click.secho("Applying dynamic recursive filtering and calculating clades...", fg="cyan", err=True)
+    target_cols = ["t_id", "sample_id", "taxon_reads"]
     if data_standard == "SWEBITS":
         target_cols.extend(["year", "week"])
         
+    input_df = lf.select(target_cols).collect()
+    
+    if data_standard == "SWEBITS":
+        # Consolidate SWEBITS samples into periods
+        input_df = input_df.with_columns(
+            (pl.col("year").cast(pl.String) + "_" + pl.col("week").cast(pl.String).str.pad_start(2, "0")).alias("period")
+        ).drop("sample_id").rename({"period": "sample_id"})
+        
+    # Calculate baseline for audit report (no filters)
+    baseline_df, _ = calc_clade_sum(
+        input_df, tree, min_reads=0, min_observed=0, keep_composition=False
+    )
+    
+    # Calculate filtered for actual output
+    filtered_df, synthetic_bin = calc_clade_sum(
+        input_df, tree, min_reads=min_reads, min_observed=min_observed, keep_composition=keep_composition
+    )
+    
+    # Prune rows where clade_reads is 0 (except Unclassified)
+    baseline_df = baseline_df.filter((pl.col("clade_reads") > 0) | (pl.col("t_id") == UNCLASSIFIED_TID))
+    filtered_df = filtered_df.filter((pl.col("clade_reads") > 0) | (pl.col("t_id") == UNCLASSIFIED_TID))
+    
+    if clade_filter is not None:
+        # Re-apply clade filter because calc_clade_sum automatically adds all ancestors up to the root
+        # to ensure mathematical integrity, but we don't want to output ancestors outside the requested clade.
+        clade_taxids = tree.get_clade(clade_filter)
+        baseline_df = baseline_df.filter(pl.col("t_id").is_in(clade_taxids))
+        filtered_df = filtered_df.filter(pl.col("t_id").is_in(clade_taxids))
+    
+    # 6. Mode Extraction and Matrix Generation
+    click.secho(f"Extracting '{mode}' metrics...", fg="cyan", err=True)
     if mode == "taxon":
-        target_cols.append("taxon_reads")
-        pivot_df = lf.select(target_cols).collect()
+        pivot_df = filtered_df.select(["t_id", "sample_id", "taxon_reads"])
         pivot_col = "taxon_reads"
     elif mode == "clade":
-        target_cols.append("clade_reads")
-        pivot_df = lf.select(target_cols).collect()
+        pivot_df = filtered_df.select(["t_id", "sample_id", "clade_reads"])
         pivot_col = "clade_reads"
     elif mode == "canonical":
         click.secho("Calculating canonical remainders (this may take a moment)...", fg="cyan", err=True)
-        # NCA math always requires clade_reads, audit needs taxon_reads
-        input_cols = ["t_id", "sample_id", "clade_reads", "taxon_reads"]
-        input_df = lf.select(input_cols).collect()
-        
-        # Calculate remainders via optimized NCA logic
+        # Canonical logic needs both taxon and clade reads for the remaining active nodes
         pivot_df = calculate_canonical_remainders(
-            input_df, 
+            filtered_df, 
             tree, 
             keep_unclassified=keep_unclassified,
             clade_filter=clade_filter
         )
-        
-        # Re-attach temporal columns if SWEBITS standard
-        if data_standard == "SWEBITS":
-            sample_meta = lf.select(["sample_id", "year", "week"]).unique().collect()
-            pivot_df = pivot_df.join(sample_meta, on="sample_id")
         pivot_col = "val"
 
-    # 6. Matrix Generation (Pivoting)
-    # Transform the long-format data into a wide-format matrix. 
-    # For SWEBITS data, group by YYYY_WW to enforce the strict project 
-    # constraint of one unique sample per week per site.
     click.secho("Pivoting data to wide format matrix...", fg="cyan", err=True)
-    if data_standard == "SWEBITS":
-        pivot_df = pivot_df.with_columns(
-            (pl.col("year").cast(pl.String) + "_" + pl.col("week").cast(pl.String).str.pad_start(2, "0")).alias("period")
-        )
-        pivot_key = "period"
-    else:
-        pivot_key = "sample_id"
-    
     table = pivot_df.pivot(
         values=pivot_col,
         index="t_id",
-        on=pivot_key,
+        on="sample_id",
         aggregate_function="sum"
     ).fill_null(0).sort("t_id")
     
     # 6.5 Capture Baseline Metrics for Audit Report
-    baseline_taxa_count = table.height
-    base_tids = table["t_id"].to_list()
+    baseline_taxa_count = baseline_df.select("t_id").unique().height
+    base_tids = baseline_df.select("t_id").unique()["t_id"].to_list()
+    
     sample_cols = [c for c in table.columns if c != "t_id"]
     
-    # Calculate baseline total reads before filtering (if not proportions)
+    # Baseline reads is the sum of taxon_reads
     baseline_reads = 0
     if not proportions and sample_cols:
-        baseline_reads = table.select(pl.sum_horizontal(sample_cols).sum()).item()
+        baseline_reads = baseline_df.select(pl.col("taxon_reads").sum()).item()
     
-    # 7. Quality Control Filters
-    # Apply minimum occupancy (--min-observed) and abundance (--min-reads) thresholds.
-    if sample_cols:
-        if min_observed > 0:
-            click.secho(f"Applying minimum required observations filter (min_observed >= {min_observed})...", fg="cyan", err=True)
-            # Idiomatic Polars: evaluate directly inside the filter context
-            table = table.filter(
-                pl.sum_horizontal([(pl.col(c) > 0) for c in sample_cols]) >= min_observed
-            )
-            
-        if min_reads > 0:
-            click.secho(f"Applying minimum read depth filter (min_reads >= {min_reads})...", fg="cyan", err=True)
-            table = table.filter(
-                pl.max_horizontal(sample_cols) >= min_reads
-            )
-            
-    # Calculate retained reads before keep-composition logic
+    # Retained reads
     retained_reads = 0
     if not proportions and sample_cols:
-        retained_reads = table.select(pl.sum_horizontal(sample_cols).sum()).item()
-            
-    # 8. Composition Preservation
-    # If the user requested --keep-composition, we compare the current column sums
-    # against the pre-calculated baseline totals. Any missing reads are bundled
-    # into a synthetic "Filtered classified" bin to preserve the global sample size.
+        retained_reads = filtered_df.select(pl.col("taxon_reads").sum()).item()
+        
+    # Calculate rank-based read retention for audit report
+    # We do this by grouping the long-format baseline/filtered dataframes by rank
+    # Note: calc_clade_sum ensures a node's clade_reads perfectly sum its surviving branch.
+    # To get total reads in a rank, we just sum clade_reads for all nodes of that rank.
+    # We'll pass the baseline_df and filtered_df to the audit report function.
+    
+    # 7. Composition Preservation
     produced_synthetic = False
     if keep_composition and sample_cols:
         click.secho("Applying keep-composition logic to preserve mass balance...", fg="cyan", err=True)
         filtered_row = {"t_id": FILTERED_TID}
         has_filtered = False
-        for c in sample_cols:
+        
+        # We need the original total reads to be safe against modes that drop reads intrinsically (like canonical NCA).
+        # Actually, synthetic_bin from calc_clade_sum contains exact discarded reads.
+        # But wait! If mode is canonical, does synthetic_bin accurately cover it? 
+        # Yes, because canonical preserves mass balance of the nodes it receives.
+        # Let's ensure exactly mass balance against the raw true_totals.
+        for i, c in enumerate(sample_cols):
             current_sum = table[c].sum()
             original_total = true_totals.get(c, current_sum)
             diff = original_total - current_sum
@@ -389,8 +433,8 @@ def generate_table_logic(
                 has_filtered = True
                 
         if has_filtered:
-            filtered_df = pl.DataFrame([filtered_row], schema=table.schema)
-            table = pl.concat([table, filtered_df])
+            filtered_df_table = pl.DataFrame([filtered_row], schema=table.schema)
+            table = pl.concat([table, filtered_df_table])
             produced_synthetic = True
             
     # 9. Proportion Calculation
@@ -420,6 +464,12 @@ def generate_table_logic(
     phantom_count = len(phantom_ids) if exclude_samples else 0
     actual_excluded = excl_count - phantom_count
     
+    base_clade_dict = None
+    retained_clade_dict = None
+    if tree and sample_cols and not proportions:
+        base_clade_dict = _aggregate_reads_by_rank(baseline_df, tree)
+        retained_clade_dict = _aggregate_reads_by_rank(filtered_df, tree)
+    
     _print_audit_report(
         dry_run=dry_run,
         input_name=input_parquet.name,
@@ -438,7 +488,9 @@ def generate_table_logic(
         final_tids=table["t_id"].to_list(),
         baseline_taxa_count=baseline_taxa_count,
         final_taxa_count=table.height,
-        num_sample_cols=len(sample_cols)
+        num_sample_cols=len(sample_cols),
+        base_clade_reads=base_clade_dict,
+        retained_clade_reads=retained_clade_dict
     )
     
     if dry_run:

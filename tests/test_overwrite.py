@@ -26,7 +26,6 @@ def mock_report_parquet(tmp_path, mock_report):
     df = pl.DataFrame({
         "sample_id": ["S1"],
         "t_id": [9606],
-        "clade_reads": [10],
         "taxon_reads": [10],
         "mm_tot": [100],
         "mm_uniq": [50],
@@ -78,12 +77,14 @@ def test_table_overwrite(tmp_path, mock_report_parquet):
     out = tmp_path / "out.tsv"
     out.touch()
     
+    tax_dir = Path("test_data/joltax_cache")
+    
     # Should fail
     with pytest.raises(FileExistsError, match="already exists"):
-        generate_table_logic(mock_report_parquet, out, overwrite=False)
+        generate_table_logic(mock_report_parquet, out, taxonomy_dir=tax_dir, overwrite=False)
         
     # Should pass
-    generate_table_logic(mock_report_parquet, out, overwrite=True)
+    generate_table_logic(mock_report_parquet, out, taxonomy_dir=tax_dir, overwrite=True)
     assert out.stat().st_size > 0
 
 def test_annotate_overwrite(tmp_path, mock_report_parquet):

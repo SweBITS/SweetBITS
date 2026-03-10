@@ -55,7 +55,6 @@ def test_canonical_deep_nesting(complex_taxonomy, tmp_path):
         "sample_id": ["S1"] * 10,
         "year": [2022] * 10, "week": [1] * 10,
         "t_id": [1, 2, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 10000001],
-        "clade_reads": [400, 400, 350, 300, 250, 250, 200, 150, 100, 50],
         "taxon_reads": [0, 50, 50, 50, 0, 50, 50, 50, 50, 50],
         "mm_tot": [0]*10, "mm_uniq": [0]*10, "source_file": ["f"]*10
     }).with_columns([pl.col("year").cast(pl.UInt16), pl.col("week").cast(pl.UInt8), pl.col("t_id").cast(pl.UInt32)])
@@ -84,7 +83,6 @@ def test_canonical_broad_non_canonical_parent(complex_taxonomy, tmp_path):
         "sample_id": ["S1"] * 5,
         "year": [2022] * 5, "week": [1] * 5,
         "t_id": [1, 2, 20, 2000, 3000],
-        "clade_reads": [250, 250, 250, 100, 100],
         "taxon_reads": [0, 0, 50, 100, 100],
         "mm_tot": [0]*5, "mm_uniq": [0]*5, "source_file": ["f"]*5
     }).with_columns([pl.col("year").cast(pl.UInt16), pl.col("week").cast(pl.UInt8), pl.col("t_id").cast(pl.UInt32)])
@@ -110,7 +108,6 @@ def test_canonical_adjacent_ranks(complex_taxonomy, tmp_path):
         "sample_id": ["S1"] * 7,
         "year": [2022] * 7, "week": [1] * 7,
         "t_id": [1, 2, 10, 100, 10000, 100000, 1000000],
-        "clade_reads": [100, 100, 100, 100, 100, 100, 100],
         "taxon_reads": [0, 0, 0, 0, 0, 0, 100],
         "mm_tot": [0]*7, "mm_uniq": [0]*7, "source_file": ["f"]*7
     }).with_columns([pl.col("year").cast(pl.UInt16), pl.col("week").cast(pl.UInt8), pl.col("t_id").cast(pl.UInt32)])

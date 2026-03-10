@@ -37,7 +37,7 @@ def test_gather_reports_legacy(tmp_path):
     # mm columns should NOT be present in legacy
     assert "mm_tot" not in df.columns
     assert "mm_uniq" not in df.columns
-    assert "clade_reads" in df.columns
+    assert "taxon_reads" in df.columns
 
 def test_gather_reports_mixed_consistency_error(tmp_path):
     report_dir = tmp_path / "reports_mixed"
