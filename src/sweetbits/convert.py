@@ -13,7 +13,7 @@ import psutil
 from pathlib import Path
 from typing import Dict, Any, Optional, Iterator, Tuple
 
-from sweetbits.utils import parse_sample_id, get_sample_info
+from sweetbits.utils import parse_sample_id, get_sample_info, check_write_permission
 from sweetbits.metadata import get_standard_metadata, save_companion_metadata
 
 # Tweak Polars for large-scale data handling
@@ -109,6 +109,9 @@ def convert_kraken_logic(
     """
     if output_file.exists() and not overwrite:
         raise FileExistsError(f"Output file '{output_file}' already exists. Use --overwrite to replace it.")
+
+    # 0. Early Permission Check
+    check_write_permission(output_file)
 
     if cores:
         os.environ["POLARS_MAX_THREADS"] = str(cores)

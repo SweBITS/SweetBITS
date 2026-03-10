@@ -7,7 +7,7 @@ import polars as pl
 import click
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Any
-from sweetbits.utils import parse_sample_id, get_sample_info
+from sweetbits.utils import parse_sample_id, get_sample_info, check_write_permission
 from sweetbits.metadata import get_standard_metadata, save_companion_metadata
 
 def detect_report_format(file_path: Path) -> str:
@@ -132,6 +132,9 @@ def gather_reports_logic(
     """
     if output_file.exists() and not overwrite:
         raise FileExistsError(f"Output file '{output_file}' already exists. Use --overwrite to replace it.")
+
+    # 0. Early Permission Check
+    check_write_permission(output_file)
 
     if cores:
         import os

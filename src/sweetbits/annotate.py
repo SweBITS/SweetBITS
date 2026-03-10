@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 from joltax import JolTree
 from sweetbits.metadata import validate_sweetbits_file, get_standard_metadata, save_companion_metadata
-from sweetbits.utils import FILTERED_TID, UNCLASSIFIED_TID
+from sweetbits.utils import FILTERED_TID, UNCLASSIFIED_TID, check_write_permission
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,9 @@ def annotate_table_logic(
 
     if output_file.exists() and not overwrite:
         raise FileExistsError(f"Output file '{output_file}' already exists. Use --overwrite to replace it.")
+
+    # 0. Early Permission Check
+    check_write_permission(output_file)
 
     if metadata_files is None:
         metadata_files = []

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional, List, Union, Dict, Any
 from joltax import JolTree
 from joltax.constants import CANONICAL_RANKS
-from sweetbits.utils import parse_sample_id, load_sample_id_list, FILTERED_TID, UNCLASSIFIED_TID
+from sweetbits.utils import parse_sample_id, load_sample_id_list, FILTERED_TID, UNCLASSIFIED_TID, check_write_permission
 from sweetbits.metadata import get_standard_metadata, save_companion_metadata, read_companion_metadata, validate_sweetbits_file
 from sweetbits.taxmath import calc_clade_sum
 from sweetbits.canonical import calculate_canonical_remainders
@@ -42,10 +42,10 @@ def _print_audit_report(
 ):
     """Prints the audit report for table generation."""
     click.secho("\n" + "="*80, fg="bright_black", err=True)
-    if dry_run:
-        click.secho("                    SweetBITS Table Audit (--dry-run)", fg="yellow", bold=True, err=True)
-    else:
-        click.secho("                    SweetBITS Table Audit", fg="cyan", bold=True, err=True)
+    header_text = "SweetBITS Table Audit (--dry-run)" if dry_run else "SweetBITS Table Audit"
+    # Centering logic: (80 - len(text)) // 2
+    padding = (80 - len(header_text)) // 2
+    click.secho(" " * padding + header_text, fg="yellow", bold=True, err=True)
     click.secho("="*80 + "\n", fg="bright_black", err=True)
     
     click.secho("[ 1 ] Data & Sample Overview", fg="cyan", bold=True, err=True)
@@ -133,7 +133,7 @@ def _print_audit_report(
                 pct = (r_r / o_r * 100) if o_r > 0 else 0
                 click.secho(f"{rank.capitalize():<16} {int(o_r):<18,} {int(r_r):<18,} {pct:.1f}%", err=True)
         click.secho("-" * 80, fg="bright_black", err=True)
-        click.echo("\n", err=True)
+        click.echo("", err=True)
 
     click.secho("[ 5 ] Final Table Shape", fg="cyan", bold=True, err=True)
     click.secho("-" * 80, fg="bright_black", err=True)
@@ -247,6 +247,16 @@ def generate_table_logic(
     if not overwrite and output_file.exists():
         raise FileExistsError(f"Output file '{output_file}' already exists. Use --overwrite to replace it.")
 
+    # 0. Early Validations (Point 1 and 2)
+    if not dry_run:
+        check_write_permission(output_file)
+        
+    if keep_composition and mode == "clade":
+        raise ValueError(
+            "--keep-composition is not mathematically valid for 'clade' mode due to read double-counting. "
+            "Please use 'taxon' or 'canonical' mode."
+        )
+
     if cores:
         import os
         os.environ["POLARS_MAX_THREADS"] = str(cores)
@@ -294,8 +304,6 @@ def generate_table_logic(
     true_totals = {}
     if keep_composition:
         click.secho("Calculating baseline totals for keep-composition logic...", fg="cyan", err=True)
-        if mode == "clade":
-            raise ValueError("--keep-composition is not mathematically valid for 'clade' mode due to read double-counting. Please use 'taxon' or 'canonical' mode.")
             
         tot_lf = lf
         if data_standard == "SWEBITS":
@@ -470,30 +478,29 @@ def generate_table_logic(
         base_clade_dict = _aggregate_reads_by_rank(baseline_df, tree)
         retained_clade_dict = _aggregate_reads_by_rank(filtered_df, tree)
     
-    _print_audit_report(
-        dry_run=dry_run,
-        input_name=input_parquet.name,
-        total_samples=len(all_ids),
-        actual_excluded=actual_excluded,
-        active_samples=active_samples,
-        proportions=proportions,
-        mode=mode,
-        baseline_reads=baseline_reads,
-        retained_reads=retained_reads,
-        produced_synthetic=produced_synthetic,
-        keep_composition=keep_composition,
-        has_unclass=UNCLASSIFIED_TID in table["t_id"].to_list(),
-        tree=tree,
-        base_tids=base_tids,
-        final_tids=table["t_id"].to_list(),
-        baseline_taxa_count=baseline_taxa_count,
-        final_taxa_count=table.height,
-        num_sample_cols=len(sample_cols),
-        base_clade_reads=base_clade_dict,
-        retained_clade_reads=retained_clade_dict
-    )
-    
     if dry_run:
+        _print_audit_report(
+            dry_run=dry_run,
+            input_name=input_parquet.name,
+            total_samples=len(all_ids),
+            actual_excluded=actual_excluded,
+            active_samples=active_samples,
+            proportions=proportions,
+            mode=mode,
+            baseline_reads=baseline_reads,
+            retained_reads=retained_reads,
+            produced_synthetic=produced_synthetic,
+            keep_composition=keep_composition,
+            has_unclass=UNCLASSIFIED_TID in table["t_id"].to_list(),
+            tree=tree,
+            base_tids=base_tids,
+            final_tids=table["t_id"].to_list(),
+            baseline_taxa_count=baseline_taxa_count,
+            final_taxa_count=table.height,
+            num_sample_cols=len(sample_cols),
+            base_clade_reads=base_clade_dict,
+            retained_clade_reads=retained_clade_dict
+        )
         click.secho("Dry-run complete. Exiting without saving.", fg="yellow", bold=True, err=True)
         return {
             "data_standard": data_standard,
@@ -520,6 +527,30 @@ def generate_table_logic(
     save_companion_metadata(output_file, meta)
     
     click.secho("Done!", fg="cyan", bold=True, err=True)
+
+    # 12. Final Audit Report (Point 3)
+    _print_audit_report(
+        dry_run=dry_run,
+        input_name=input_parquet.name,
+        total_samples=len(all_ids),
+        actual_excluded=actual_excluded,
+        active_samples=active_samples,
+        proportions=proportions,
+        mode=mode,
+        baseline_reads=baseline_reads,
+        retained_reads=retained_reads,
+        produced_synthetic=produced_synthetic,
+        keep_composition=keep_composition,
+        has_unclass=UNCLASSIFIED_TID in table["t_id"].to_list(),
+        tree=tree,
+        base_tids=base_tids,
+        final_tids=table["t_id"].to_list(),
+        baseline_taxa_count=baseline_taxa_count,
+        final_taxa_count=table.height,
+        num_sample_cols=len(sample_cols),
+        base_clade_reads=base_clade_dict,
+        retained_clade_reads=retained_clade_dict
+    )
         
     return {
         "data_standard": data_standard,

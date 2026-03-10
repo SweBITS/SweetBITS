@@ -10,6 +10,32 @@ from typing import List, Dict, Any
 UNCLASSIFIED_TID = 0
 FILTERED_TID = 100000000
 
+import os
+
+def check_write_permission(path: Path):
+    """
+    Checks if we have write permission for a file or directory.
+    If the file exists, checks if it's writable.
+    If it doesn't, checks if the parent directory is writable.
+    
+    Args:
+        path : Path to the file or directory.
+        
+    Raises:
+        PermissionError : If write permission is denied.
+    """
+    if path.exists():
+        if not os.access(path, os.W_OK):
+            raise PermissionError(f"Permission denied: '{path}' is not writable.")
+    else:
+        parent = path.parent
+        # If parent doesn't exist, we recursively check its parent
+        while not parent.exists() and parent != parent.parent:
+            parent = parent.parent
+            
+        if not os.access(parent, os.W_OK):
+            raise PermissionError(f"Permission denied: Cannot write to '{path}'. Parent directory '{parent}' is not writable.")
+
 def get_sample_info(filename: str) -> Dict[str, Any]:
     """
     Extracts sample ID and metadata (year, week) from a filename.
