@@ -100,7 +100,11 @@ def _print_audit_report(
         base_counts = count_ranks(base_tids)
         final_counts = count_ranks(final_tids)
         
-        display_ranks = [tree.top_rank] + CANONICAL_RANKS
+        # Deduplicate while preserving order (Top Rank followed by standard Canonical Ranks)
+        display_ranks = []
+        for r in [tree.top_rank] + CANONICAL_RANKS:
+            if r not in display_ranks:
+                display_ranks.append(r)
         
         click.secho(f"{'Rank':<16} {'Original Count':<18} {'Retained Count':<18} {'Retention %':<12}", bold=True, err=True)
         click.secho("-" * 80, fg="bright_black", err=True)
@@ -126,7 +130,7 @@ def _print_audit_report(
          parts.append("1 unclassified row")
     
     if parts:
-        row_str += f" (incl. {', '.join(parts)})"
+        row_str += f" (incl. {', and '.join(parts)})"
         
     click.secho(f"Rows (Taxa)           : {row_str}", err=True)
     click.secho(f"Columns (Samples)     : {num_sample_cols}\n", err=True)
