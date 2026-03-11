@@ -166,7 +166,15 @@ def calculate_canonical_remainders(
     # maximum performance. Final join restores unclassified data if requested.
     rem_tids = tree._index_to_id[active_canonical_indices]
     result_wide = pl.from_numpy(remainders, schema=sample_names).with_columns(t_id = pl.Series(rem_tids).cast(pl.UInt32))
+    
+    # Track original sample_id dtype (it might be Categorical)
+    orig_sample_dtype = df.schema["sample_id"]
+    
     result = result_wide.unpivot(index="t_id", variable_name="sample_id", value_name="val")
+    result = result.with_columns(
+        pl.col("sample_id").cast(orig_sample_dtype),
+        pl.col("val").cast(pl.UInt32)
+    )
     
     if keep_unclassified and clade_filter is None and 0 not in rem_tids:
         unclass_lf = df.filter(pl.col("t_id") == 0).group_by(["sample_id", "t_id"]).agg(pl.col("clade_reads").sum().alias("val"))
