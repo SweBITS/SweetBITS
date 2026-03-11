@@ -70,7 +70,7 @@ sweetbits produce table merged_reports.parquet \
     --taxonomy /path/to/joltax_cache \
     --clade 2 \
     --proportions \
-    --keep-composition
+    --keep-filtered
 ```
 
 ## 3. Annotating Tables (`annotate`)

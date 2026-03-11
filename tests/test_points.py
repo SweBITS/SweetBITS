@@ -24,14 +24,4 @@ def test_permission_check_early(tmp_path):
         # Restore permissions so tmp_path can be cleaned up
         os.chmod(ro_dir, 0o755)
 
-def test_early_keep_composition_validation(tmp_path):
-    output = tmp_path / "test.tsv"
-    # Should raise ValueError before any file access
-    with pytest.raises(ValueError, match="not mathematically valid for 'clade' mode"):
-        generate_table_logic(
-            input_parquet=Path("non_existent.parquet"),
-            output_file=output,
-            mode="clade",
-            keep_composition=True,
-            taxonomy_dir=Path("tax")
-        )
+

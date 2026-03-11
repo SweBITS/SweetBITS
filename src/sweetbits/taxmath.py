@@ -13,7 +13,7 @@ def calc_clade_sum(
     tree: JolTree, 
     min_reads: int = 0, 
     min_observed: int = 0,
-    keep_composition: bool = False
+    keep_filtered: bool = False
 ) -> Tuple[pl.DataFrame, np.ndarray]:
     """
     Computes hierarchical clade counts dynamically from direct taxon counts using 
@@ -29,12 +29,12 @@ def calc_clade_sum(
         tree             : The loaded JolTree taxonomy cache.
         min_reads        : Minimum maximum read count across all samples to survive.
         min_observed     : Minimum number of non-zero samples to survive.
-        keep_composition : If True, returns a sum of pruned clade reads for mass balance.
+        keep_filtered    : If True, returns a sum of pruned taxon reads for mass balance.
 
     Returns:
         A tuple containing:
         - A new DataFrame with updated 'taxon_reads' (orphans removed) and new 'clade_reads'.
-        - A NumPy array of reads placed into the synthetic bin per sample (if keep_composition).
+        - A NumPy array of reads placed into the synthetic bin per sample (if keep_filtered).
     """
     # 1. Pivot the input data into a dense matrix (t_id x samples)
     matrix_df = df.pivot(
@@ -131,8 +131,8 @@ def calc_clade_sum(
         
         # The Purge: failed nodes
         if len(failed_rows) > 0:
-            if keep_composition:
-                synthetic_bin += np.sum(clade_reads[failed_rows, :], axis=0)
+            if keep_filtered:
+                synthetic_bin += np.sum(taxon_reads[failed_rows, :], axis=0)
             clade_reads[failed_rows, :] = 0
             taxon_reads[failed_rows, :] = 0
             

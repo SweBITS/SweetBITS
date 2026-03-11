@@ -49,7 +49,7 @@ def test_calc_clade_sum_filtering(tmp_path):
     
     # Set min_reads = 15. 9606 (10) should fail. 2 (20) should pass.
     # 1 (root) should only get vote from 2 (20).
-    result, synth = calc_clade_sum(df, tree, min_reads=15, min_observed=1, keep_composition=True)
+    result, synth = calc_clade_sum(df, tree, min_reads=15, min_observed=1, keep_filtered=True)
     
     res_dict = {row["t_id"]: row["clade_reads"] for row in result.to_dicts()}
     

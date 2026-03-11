@@ -29,7 +29,7 @@ def _print_audit_report(
     baseline_reads: int,
     retained_reads: int,
     produced_synthetic: bool,
-    keep_composition: bool,
+    keep_filtered: bool,
     has_unclass: bool,
     tree: Optional[JolTree],
     base_tids: List[int],
@@ -71,7 +71,7 @@ def _print_audit_report(
         
         comp_status = "YES (Filtered reads retained in synthetic bin)" if produced_synthetic else "NO"
         
-        if keep_composition and not has_unclass:
+        if keep_filtered and not has_unclass:
              comp_status = "PARTIAL (Filtered reads kept, but Unclassified reads missing)"
         
         click.secho(f"Composition Intact    : {comp_status}", err=True)
@@ -221,7 +221,7 @@ def generate_table_logic(
     clade_filter: Optional[int] = None,
     keep_unclassified: bool = False,
     proportions: bool = False,
-    keep_composition: bool = False,
+    keep_filtered: bool = False,
     cores: Optional[int] = None,
     overwrite: bool = False,
     dry_run: bool = False
@@ -250,7 +250,7 @@ def generate_table_logic(
         clade_filter      : Optional TaxID to restrict output to a specific clade.
         keep_unclassified : Whether to include TaxID 0 in the output.
         proportions       : If True, outputs relative proportions instead of raw read counts.
-        keep_composition  : If True (taxon/canonical modes only), retains filtered reads in a 
+        keep_filtered  : If True (taxon/canonical modes only), retains filtered reads in a 
                             synthetic 'Filtered classified' bin to preserve the global read total
                             for accurate relative abundance calculations.
         cores             : Number of CPU cores to use for Polars operations.
@@ -266,7 +266,7 @@ def generate_table_logic(
 
     Raises:
         ValueError        : If required parameters are missing for the selected mode, or if 
-                            keep_composition is used with an incompatible mode.
+                            keep_filtered is used with an incompatible mode.
         FileNotFoundError : If the input file does not exist.
         FileExistsError   : If output_file exists and overwrite is False.
     """
@@ -279,12 +279,6 @@ def generate_table_logic(
     if not dry_run:
         check_write_permission(output_file)
         
-    if keep_composition and mode == "clade":
-        raise ValueError(
-            "--keep-composition is not mathematically valid for 'clade' mode due to read double-counting. "
-            "Please use 'taxon' or 'canonical' mode."
-        )
-
     if cores:
         import os
         os.environ["POLARS_MAX_THREADS"] = str(cores)
@@ -330,8 +324,8 @@ def generate_table_logic(
     # we must calculate the true, unfiltered total reads for each sample BEFORE any taxonomic
     # filters drop rows from the lazyframe.
     true_totals = {}
-    if keep_composition:
-        click.secho("Calculating baseline totals for keep-composition logic...", fg="cyan", err=True)
+    if keep_filtered:
+        click.secho("Calculating baseline totals for keep-filtered logic...", fg="cyan", err=True)
             
         tot_lf = lf
         if data_standard == "SWEBITS":
@@ -379,12 +373,12 @@ def generate_table_logic(
         
     # Calculate baseline for audit report (no filters)
     baseline_df, _ = calc_clade_sum(
-        input_df, tree, min_reads=0, min_observed=0, keep_composition=False
+        input_df, tree, min_reads=0, min_observed=0, keep_filtered=False
     )
     
     # Calculate filtered for actual output
     filtered_df, synthetic_bin = calc_clade_sum(
-        input_df, tree, min_reads=min_reads, min_observed=min_observed, keep_composition=keep_composition
+        input_df, tree, min_reads=min_reads, min_observed=min_observed, keep_filtered=keep_filtered
     )
     
     # Prune rows where clade_reads is 0 (except Unclassified)
@@ -449,8 +443,8 @@ def generate_table_logic(
     
     # 7. Composition Preservation
     produced_synthetic = False
-    if keep_composition and sample_cols:
-        click.secho("Applying keep-composition logic to preserve mass balance...", fg="cyan", err=True)
+    if keep_filtered and sample_cols:
+        click.secho("Applying keep-filtered logic to preserve mass balance...", fg="cyan", err=True)
         filtered_row = {"t_id": FILTERED_TID}
         has_filtered = False
         
@@ -522,7 +516,7 @@ def generate_table_logic(
             baseline_reads=baseline_reads,
             retained_reads=retained_reads,
             produced_synthetic=produced_synthetic,
-            keep_composition=keep_composition,
+            keep_filtered=keep_filtered,
             has_unclass=UNCLASSIFIED_TID in table["t_id"].to_list(),
             tree=tree,
             base_tids=base_tids,
@@ -574,7 +568,7 @@ def generate_table_logic(
         baseline_reads=baseline_reads,
         retained_reads=retained_reads,
         produced_synthetic=produced_synthetic,
-        keep_composition=keep_composition,
+        keep_filtered=keep_filtered,
         has_unclass=UNCLASSIFIED_TID in table["t_id"].to_list(),
         tree=tree,
         base_tids=base_tids,

@@ -17,7 +17,7 @@ This algorithm solves the problem of "sparse noisy children diluting parent satu
 1.  **Initialization:** 
     *   Load `taxon_reads` matrix (rows = internal tree indices, columns = samples).
     *   Initialize `clade_reads` matrix as a direct copy of `taxon_reads`.
-    *   Initialize a 1D `synthetic_bin` array for `--keep-composition` (length = num samples).
+    *   Initialize a 1D `synthetic_bin` array for `--keep-filtered` (length = num samples).
 2.  **The Loop (Bottom-Up):**
     *   Iterate backwards from `max_depth` (the deepest leaves) down to `0` (the Root).
     *   At `current_depth`, mask all active nodes.
