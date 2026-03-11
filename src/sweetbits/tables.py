@@ -449,14 +449,15 @@ def generate_table_logic(
         has_filtered = False
         
         # We need the original total reads to be safe against modes that drop reads intrinsically (like canonical NCA).
-        # Actually, synthetic_bin from calc_clade_sum contains exact discarded reads.
-        # But wait! If mode is canonical, does synthetic_bin accurately cover it? 
-        # Yes, because canonical preserves mass balance of the nodes it receives.
-        # Let's ensure exactly mass balance against the raw true_totals.
-        for i, c in enumerate(sample_cols):
-            current_sum = table[c].sum()
-            original_total = true_totals.get(c, current_sum)
-            diff = original_total - current_sum
+        # We calculate the sum of surviving taxon_reads per sample from the base filtered_df.
+        # This is mode-independent and avoids the double-counting issue in 'clade' mode.
+        surviving_totals = filtered_df.group_by("sample_id").agg(pl.col("taxon_reads").sum().alias("survived"))
+        surviving_map = dict(zip(surviving_totals["sample_id"].to_list(), surviving_totals["survived"].to_list()))
+
+        for c in sample_cols:
+            survived = surviving_map.get(c, 0)
+            original_total = true_totals.get(c, survived)
+            diff = original_total - survived
             if diff < 0: diff = 0
             filtered_row[c] = diff
             if diff > 0:
