@@ -94,22 +94,13 @@ def generate_table_logic(
     metadata = validate_sweetbits_file(input_parquet, expected_type="REPORT_PARQUET", required_columns=required_cols)
     data_standard = metadata.get("data_standard", "GENERIC")
 
-    # Lazy scan and early normalization
+    # Lazy scan
     lf = pl.scan_parquet(input_parquet)
     
-    if data_standard == "SWEBITS":
-        # Consolidate SWEBITS samples into standard 'sample_id' format immediately
-        # so downstream logic is completely agnostic to the data standard.
-        lf = lf.with_columns(
-            (pl.col("year").cast(pl.String) + "_" + pl.col("week").cast(pl.String).str.pad_start(2, "0")).alias("period")
-        ).drop("sample_id").rename({"period": "sample_id"})
-        
-    # Isolate required columns and collect into eager memory ONCE. 
-    # This prevents multiple disk I/O passes for validation, true_totals, and math.
-    input_df = lf.select(["t_id", "sample_id", "taxon_reads"]).collect()
-
     # 2. Sample Filtering and Validation
-    all_ids = set(input_df["sample_id"].unique().to_list())
+    # We must evaluate exclusions against the original sample_id BEFORE SWEBITS consolidation
+    # to ensure the user's exclusion file matches the data.
+    all_ids = set(lf.select("sample_id").unique().collect()["sample_id"].to_list())
     excluded_ids = []
     phantom_ids = []
 
@@ -123,8 +114,19 @@ def generate_table_logic(
                 f"Warning: {len(phantom_ids)} sample IDs in exclusion file were not found in the dataset. "
                 "Please check for typos.", fg="yellow", err=True
             )
-        input_df = input_df.filter(~pl.col("sample_id").is_in(excluded_ids))
+        lf = lf.filter(~pl.col("sample_id").is_in(excluded_ids))
         
+    # Now we can normalize SWEBITS data
+    if data_standard == "SWEBITS":
+        # Consolidate SWEBITS samples into standard 'sample_id' format
+        lf = lf.with_columns(
+            (pl.col("year").cast(pl.String) + "_" + pl.col("week").cast(pl.String).str.pad_start(2, "0")).alias("period")
+        ).drop("sample_id").rename({"period": "sample_id"})
+        
+    # Isolate required columns and collect into eager memory ONCE. 
+    # This prevents multiple disk I/O passes for true_totals and math.
+    input_df = lf.select(["t_id", "sample_id", "taxon_reads"]).collect()
+    
     active_samples = input_df.select("sample_id").n_unique()
         
     if min_observed > (active_samples / 2) and active_samples > 0:
