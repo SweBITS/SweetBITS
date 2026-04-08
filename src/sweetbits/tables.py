@@ -137,7 +137,7 @@ def generate_table_logic(
     true_totals = {}
     if keep_filtered and clade_filter is not None:
         click.secho("Calculating baseline totals for global mass preservation...", fg="cyan", err=True)
-        totals_df = input_df.group_by("sample_id").agg(pl.col("taxon_reads").sum().alias("total_reads"))
+        totals_df = input_df.group_by("sample_id").agg(pl.col("taxon_reads").cast(pl.UInt64).sum().alias("total_reads"))
         true_totals = dict(zip(totals_df["sample_id"].to_list(), totals_df["total_reads"].to_list()))
 
     # 5. Taxonomic Filtering (JolTax Integration)
@@ -216,12 +216,12 @@ def generate_table_logic(
     baseline_reads = 0
     retained_reads = 0
     if not proportions and sample_cols:
-        baseline_reads = baseline_df.select(pl.col("taxon_reads").sum()).item()
+        baseline_reads = baseline_df.select(pl.col("taxon_reads").cast(pl.UInt64).sum()).item()
         if mode == "canonical":
             # Retained reads are simply the sum of all remainders in the final matrix
-            retained_reads = table.select(pl.sum_horizontal(sample_cols).sum()).item()
+            retained_reads = table.select(pl.sum_horizontal(pl.col(sample_cols).cast(pl.UInt64)).sum()).item()
         else:
-            retained_reads = filtered_df.select(pl.col("taxon_reads").sum()).item()
+            retained_reads = filtered_df.select(pl.col("taxon_reads").cast(pl.UInt64).sum()).item()
         
     # 8. Composition Preservation (Global Mass for Clade Filter)
     produced_synthetic = False
@@ -239,12 +239,12 @@ def generate_table_logic(
             for c in sample_cols:
                 max_class = table.filter(pl.col("t_id") != 0)[c].max()
                 if max_class is None: max_class = 0
-                unclass = table.filter(pl.col("t_id") == 0)[c].sum()
+                unclass = table.filter(pl.col("t_id") == 0)[c].cast(pl.UInt64).sum()
                 if unclass is None: unclass = 0
                 surviving_totals[c] = max_class + unclass
         else:
             # For taxon/canonical mode, it's a simple sum
-            surviving_totals = {c: table[c].sum() for c in sample_cols}
+            surviving_totals = {c: table[c].cast(pl.UInt64).sum() for c in sample_cols}
 
         for c in sample_cols:
             survived = surviving_totals.get(c, 0)
@@ -263,19 +263,19 @@ def generate_table_logic(
     if proportions and sample_cols:
         click.secho("Converting counts to relative proportions...", fg="cyan", err=True)
         if mode in ["taxon", "canonical"]:
-            exprs = [(pl.col(c) / pl.col(c).sum()).alias(c) for c in sample_cols]
+            exprs = [(pl.col(c) / pl.col(c).cast(pl.UInt64).sum()).alias(c) for c in sample_cols]
             table = table.with_columns(exprs)
         elif mode == "clade":
             exprs = []
             for c in sample_cols:
                 # If we injected the FILTERED_TID, it must be added to the denominator
-                filtered_mass = table.filter(pl.col("t_id") == FILTERED_TID)[c].sum()
+                filtered_mass = table.filter(pl.col("t_id") == FILTERED_TID)[c].cast(pl.UInt64).sum()
                 if filtered_mass is None: filtered_mass = 0
                 
                 max_class = table.filter((pl.col("t_id") != 0) & (pl.col("t_id") != FILTERED_TID))[c].max()
                 if max_class is None: max_class = 0
                 
-                unclass = table.filter(pl.col("t_id") == 0)[c].sum()
+                unclass = table.filter(pl.col("t_id") == 0)[c].cast(pl.UInt64).sum()
                 if unclass is None: unclass = 0
                 
                 total = max_class + unclass + filtered_mass
