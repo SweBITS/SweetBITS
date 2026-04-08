@@ -247,3 +247,4 @@ Instead of embedding metadata in the Parquet header, SweetBITS uses a Strict Mod
 8. [x] Implement `collect kraken classifications` (Ingestion from raw Kraken/FASTQ).
 9. [ ] Implement peak memory reporting for Windows (currently Unix-only).
 10. [ ] Future: `coda` command suite for Compositional Data Analysis.
+11. [x] **Bugfix:** Update `calculate_canonical_remainders` in `canonical.py` to not hardcode `global_root_idx = 0` and safeguard `parent_indices = tree.parents[active_canonical_subset]` against `-1` to prevent silent indexing bugs if the tree root changes.

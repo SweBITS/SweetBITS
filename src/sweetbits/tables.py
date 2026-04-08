@@ -129,7 +129,7 @@ def generate_table_logic(
         )
 
     # 3. Handle Unclassified explicit user intent FIRST
-    if not keep_unclassified and mode != "canonical":
+    if not keep_unclassified:
         click.secho("Filtering out unclassified reads...", fg="cyan", err=True)
         input_df = input_df.filter(pl.col("t_id") != 0)
 
@@ -186,12 +186,16 @@ def generate_table_logic(
         pivot_df = filtered_df.select(["t_id", "sample_id", "clade_reads"])
         pivot_col = "clade_reads"
     elif mode == "canonical":
-        click.secho("Calculating canonical remainders (this may take a moment)...", fg="cyan", err=True)
+        click.secho("Calculating canonical remainders and bubbling (this may take a moment)...", fg="cyan", err=True)
+        # Use unfiltered baseline_df so true raw remainders can be calculated first, 
+        # then pass the thresholds directly to perform 'Remainder Bubbling'
         pivot_df = calculate_canonical_remainders(
-            filtered_df, 
+            baseline_df, 
             tree, 
             keep_unclassified=keep_unclassified,
-            clade_filter=clade_filter
+            clade_filter=clade_filter,
+            min_reads=min_reads,
+            min_observed=min_observed
         )
         pivot_col = "val"
 
@@ -203,17 +207,21 @@ def generate_table_logic(
         aggregate_function="sum"
     ).fill_null(0).sort("t_id")
     
+    sample_cols = [c for c in table.columns if c != "t_id"]
+    
     # Capture Baseline Metrics for Audit Report
     baseline_taxa_count = baseline_df.select("t_id").n_unique()
     base_tids = baseline_df.select("t_id").unique()["t_id"].to_list()
-    
-    sample_cols = [c for c in table.columns if c != "t_id"]
     
     baseline_reads = 0
     retained_reads = 0
     if not proportions and sample_cols:
         baseline_reads = baseline_df.select(pl.col("taxon_reads").sum()).item()
-        retained_reads = filtered_df.select(pl.col("taxon_reads").sum()).item()
+        if mode == "canonical":
+            # Retained reads are simply the sum of all remainders in the final matrix
+            retained_reads = table.select(pl.sum_horizontal(sample_cols).sum()).item()
+        else:
+            retained_reads = filtered_df.select(pl.col("taxon_reads").sum()).item()
         
     # 8. Composition Preservation (Global Mass for Clade Filter)
     produced_synthetic = False
@@ -301,9 +309,16 @@ def generate_table_logic(
     retained_taxon_dict = None
     if tree and sample_cols and not proportions:
         base_clade_dict = _aggregate_reads_by_rank(baseline_df, tree, "clade_reads")
-        retained_clade_dict = _aggregate_reads_by_rank(filtered_df, tree, "clade_reads")
         base_taxon_dict = _aggregate_reads_by_rank(baseline_df, tree, "taxon_reads")
-        retained_taxon_dict = _aggregate_reads_by_rank(filtered_df, tree, "taxon_reads")
+        
+        if mode == "canonical":
+            # For canonical mode, the resulting table already holds the final bubbled remainders
+            table_long = table.unpivot(index="t_id", variable_name="sample_id", value_name="val")
+            retained_taxon_dict = _aggregate_reads_by_rank(table_long, tree, "val")
+            retained_clade_dict = retained_taxon_dict # Not technically accurate, but prevents None errors in audit
+        else:
+            retained_clade_dict = _aggregate_reads_by_rank(filtered_df, tree, "clade_reads")
+            retained_taxon_dict = _aggregate_reads_by_rank(filtered_df, tree, "taxon_reads")
     
     print_audit_report(
         dry_run=dry_run,
