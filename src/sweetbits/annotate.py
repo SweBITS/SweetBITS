@@ -294,11 +294,13 @@ def annotate_table_logic(
         # 5.5 Execute DFS Traversal
         dfs_order = []
 
-        # Prepend Unclassified and Filtered reads if present
+        # Prepend Unclassified, Filtered reads, and Root if present
         if UNCLASSIFIED_TID in table_tid_means:
             dfs_order.append(UNCLASSIFIED_TID)
         if has_filtered:
             dfs_order.append(FILTERED_TID)
+        if 1 in table_tid_means:
+            dfs_order.append(1)
 
         # Start DFS from the global root (index 0) if it's active, otherwise start from the 
         # highest level active nodes (in case the tree is fragmented)
@@ -340,12 +342,14 @@ def annotate_table_logic(
         actual_sort_cols = [c for c in sort_cols_target if c in df.columns]
 
         # Use case-insensitive sorting for string columns to avoid ASCII E < d issues
-        # and ensure Unclassified/Filtered are always at the top
+        # and ensure Unclassified/Filtered/Root are always at the top
         sort_exprs = [
             # Priority 1: Unclassified (0)
             (pl.col("t_id") != UNCLASSIFIED_TID).cast(pl.UInt8),
             # Priority 2: Filtered Classified (MaxInt)
             (pl.col("t_id") != FILTERED_TID).cast(pl.UInt8),
+            # Priority 3: Root (1)
+            (pl.col("t_id") != 1).cast(pl.UInt8),
         ]
 
         for c in actual_sort_cols:
