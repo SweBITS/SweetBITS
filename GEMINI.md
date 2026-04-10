@@ -218,7 +218,7 @@ Instead of embedding metadata in the Parquet header, SweetBITS uses a Strict Mod
 ### Code Constraints & Libraries
 - **Polars Over Pandas:** Strict requirement. Use `LazyFrames` by default. Apply streaming. Downcast datatypes (especially for Parquet saves). Explicitly manage core counts. Use `Categorical` types where sensible.
 - **CLI Framework:** Use `click`.
-- **Taxonomy:** Use `JolTax` (>=v0.2.0).
+- **Taxonomy:** Use `JolTax` (>=v0.3.0).
 - **Standard Libraries:** Use `pathlib` for paths, `logging` for output, `numpy` for vectorization.
 - **Performance:** Stream reads, chunk large operations, and utilize multiprocessing (`--cores` exposed in CLI) where reasonable. Fit within standard workstation RAM limits.
 

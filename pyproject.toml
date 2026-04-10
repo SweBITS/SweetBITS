@@ -12,7 +12,7 @@ dependencies = [
     "polars>=1.38.1",
     "click>=8.3.1",
     "numpy>=2.4.2",
-    "joltax>=0.2.0",
+    "joltax>=0.3.0",
     "pyarrow",
 ]
 
