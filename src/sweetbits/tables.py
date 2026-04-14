@@ -156,29 +156,32 @@ def generate_table_logic(
             input_df = input_df.filter(pl.col("t_id").is_in(clade_taxids))
         
     # 6. Dynamic Clade Math & Filtering
-    click.secho("Applying dynamic recursive filtering and calculating clades...", fg="cyan", err=True)
+    click.secho("Calculating cumulative clade counts...", fg="cyan", err=True)
         
     # Calculate baseline for audit report (no filters)
     baseline_df = calc_clade_sum(
         input_df, tree, min_reads=0, min_observed=0
     )
-    
-    # Calculate filtered for actual output
-    filtered_df = calc_clade_sum(
-        input_df, tree, min_reads=min_reads, min_observed=min_observed
-    )
-    
     # Prune rows where clade_reads is 0 (except Unclassified)
     baseline_df = baseline_df.filter((pl.col("clade_reads") > 0) | (pl.col("t_id") == UNCLASSIFIED_TID))
-    filtered_df = filtered_df.filter((pl.col("clade_reads") > 0) | (pl.col("t_id") == UNCLASSIFIED_TID))
-    
+
     if clade_filter is not None:
         clade_taxids = tree.get_clade(clade_filter)
         baseline_df = baseline_df.filter(pl.col("t_id").is_in(clade_taxids) | (pl.col("t_id") == 0))
-        filtered_df = filtered_df.filter(pl.col("t_id").is_in(clade_taxids) | (pl.col("t_id") == 0))
+
+    # Calculate filtered for actual output (only for taxon/clade modes)
+    filtered_df = None
+    if mode in ["taxon", "clade"]:
+        click.secho("Applying dynamic recursive filtering and calculating clades...", fg="cyan", err=True)
+        filtered_df = calc_clade_sum(
+            input_df, tree, min_reads=min_reads, min_observed=min_observed
+        )
+        filtered_df = filtered_df.filter((pl.col("clade_reads") > 0) | (pl.col("t_id") == UNCLASSIFIED_TID))
+        if clade_filter is not None:
+            clade_taxids = tree.get_clade(clade_filter)
+            filtered_df = filtered_df.filter(pl.col("t_id").is_in(clade_taxids) | (pl.col("t_id") == 0))
     
     # 7. Mode Extraction and Matrix Generation
-    click.secho(f"Extracting '{mode}' metrics...", fg="cyan", err=True)
     if mode == "taxon":
         pivot_df = filtered_df.select(["t_id", "sample_id", "taxon_reads"])
         pivot_col = "taxon_reads"
@@ -186,7 +189,7 @@ def generate_table_logic(
         pivot_df = filtered_df.select(["t_id", "sample_id", "clade_reads"])
         pivot_col = "clade_reads"
     elif mode == "canonical":
-        click.secho("Calculating canonical remainders and bubbling (this may take a moment)...", fg="cyan", err=True)
+        click.secho("Calculating canonical remainders...", fg="cyan", err=True)
         # Use unfiltered baseline_df so true raw remainders can be calculated first, 
         # then pass the thresholds directly to perform 'Remainder Bubbling'
         pivot_df = calculate_canonical_remainders(
@@ -199,7 +202,7 @@ def generate_table_logic(
         )
         pivot_col = "val"
 
-    click.secho("Pivoting data to wide format matrix...", fg="cyan", err=True)
+    click.secho("Formatting output table...", fg="cyan", err=True)
     table = pivot_df.pivot(
         values=pivot_col,
         index="t_id",
