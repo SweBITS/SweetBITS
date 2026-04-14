@@ -11,7 +11,7 @@ import sys
 from typing import Dict, Any, Optional, List, Tuple
 from sweetbits import __version__
 
-MINIMUM_COMPATIBLE_VERSION = "0.1.1"
+MINIMUM_COMPATIBLE_VERSION = "0.2.0"
 
 def _parse_version(v_str: str) -> Tuple[int, ...]:
     """Parses a semantic version string into a tuple of integers."""
