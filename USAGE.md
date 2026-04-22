@@ -108,7 +108,42 @@ sweetbits annotate abundance_table.parquet \
     --output highly_annotated.csv
 ```
 
-## 4. Extracting Reads (`produce reads`)
+## 4. Calculating Features (`produce feature`)
+
+Generate taxonomic validation metrics and other complex features.
+
+### Minimizer Correlations (`uniq-minimizer-corr`)
+This tool calculates the statistical reliability of taxonomic assignments by correlating observed unique minimizer coverage against a probabilistic model. It generates a "Validation Metadata" table that can be joined to any abundance matrix.
+
+```bash
+# Basic usage
+sweetbits produce feature uniq-minimizer-corr merged_reports.parquet \
+    --inspect /path/to/kraken_inspect.csv \
+    --taxonomy /path/to/joltax_cache \
+    --output minimizer_validation.csv
+
+# Exclude bad samples and overwrite existing output
+sweetbits produce feature uniq-minimizer-corr merged_reports.parquet \
+    --inspect kraken_inspect.csv \
+    --taxonomy /path/to/joltax_cache \
+    --bad-samples bad_samples.txt \
+    --output minimizer_validation.parquet \
+    --overwrite
+```
+
+### Full Validation Workflow
+A typical SweetBITS workflow for creating a high-confidence abundance table:
+
+1. **Merge Reports**: 
+   `sweetbits collect kraken reports /data --output reports.parquet`
+2. **Generate Table**: 
+   `sweetbits produce table reports.parquet --mode canonical --output raw_table.tsv`
+3. **Calculate Validation**: 
+   `sweetbits produce feature uniq-minimizer-corr reports.parquet --inspect kraken_inspect.csv --output validation.csv`
+4. **Annotate & Merge**: 
+   `sweetbits annotate raw_table.tsv --metadata validation.csv --output validated_table.tsv`
+
+## 5. Extracting Reads (`produce reads`)
 
 Stream reads from annotated Parquet files back to FASTQ.gz format.
 

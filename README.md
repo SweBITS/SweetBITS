@@ -29,7 +29,9 @@ sweetbits
 │
 ├── produce
 │   ├── reads                  <- Extracts reads back to FASTQ
-│   └── table                  <- Generates abundance matrices
+│   ├── table                  <- Generates abundance matrices
+│   └── feature
+│       └── uniq-minimizer-corr <- Calculates validation metrics
 │
 ├── annotate                   <- Amends tables with JolTax metadata
 └── inspect                    <- Prints Parquet metadata
@@ -48,6 +50,10 @@ SweetBITS provides several high-performance tools for processing Kraken 2 output
     - `canonical`: **Canonical Remainders**. Essentially taxon mode but where reads between canonical ranks have been pushed up to the nearest canonical ancestor (NCA). Eliminates double-counting while conserving mass balance. Supports "non-canonical rank skipping" (Canonical Rank Read Standardization).
     - *Dry Run:* Use `--dry-run` to preview the audit report and taxon retention statistics without saving the output file.
     - *Note:* `--exclude-samples` will issue a warning if an ID in your exclusion file is missing from the dataset.
+- `produce feature uniq-minimizer-corr`: Calculates species-level and clade-level validation metrics based on unique minimizer coverage.
+    - *Validation Strategy:* Correlates observed unique minimizer coverage against a probabilistic expectation model. Taxa that fail to correlate across samples (e.g., Pearson R < 0.7) are likely false positives.
+    - *Safety Limits:* Automatically applies a floor of $n \ge 6$ samples to ensure statistical stability.
+    - *Usage:* Generates a `FEATURE_TABLE` indexed by `t_id` that can be joined to any abundance table via `sweetbits annotate --metadata`.
 - `annotate`: Transforms numeric abundance matrices into human-readable files. Automatically injects full taxonomic lineages from JolTax, calculates mean_signal, and supports two sorting modes:
     - `alphabetical`: Hierarchical rank-based sort (Domain -> Phylum -> ...).
     - `dfs`: Abundance-weighted Depth-First Search traversal (related organisms cluster together, most abundant branches first).

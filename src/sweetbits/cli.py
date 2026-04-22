@@ -14,6 +14,7 @@ from sweetbits.tables import generate_table_logic
 from sweetbits.reads import extract_reads_logic
 from sweetbits.annotate import annotate_table_logic
 from sweetbits.convert import convert_kraken_logic
+from sweetbits.features import produce_feature_uniq_minimizer_corr_logic
 
 def print_splash():
     """Prints the stylish ASCII logo and developer information."""
@@ -108,6 +109,49 @@ def kraken():
 def produce():
     """Commands to generate outputs like abundance tables and FASTQ files."""
     pass
+
+@produce.group(short_help="Generate classification quality features.")
+def feature():
+    """Commands to calculate classification quality features, for example for use in machine learning."""
+    pass
+
+@feature.command(name="uniq-minimizer-corr", short_help="Calculate minimizer correlation features.")
+@click.argument("input_parquet", type=click.Path(exists=True, path_type=Path))
+@click.option("--inspect", "-i", type=click.Path(exists=True, path_type=Path), required=True, help="Kraken inspect CSV file.")
+@click.option("--taxonomy", "-t", type=click.Path(path_type=Path), required=True, help="JolTax cache directory.")
+@click.option("--output", "-o", type=click.Path(path_type=Path), required=True, help="Path to summary output file (.csv, .tsv, .parquet).")
+@click.option("--output-long", type=click.Path(path_type=Path), help="Path to save long-format per-sample features (.parquet).")
+@click.option("--bad-samples", type=click.Path(exists=True, path_type=Path), help="File with sample IDs to exclude.")
+@click.option("--cores", type=int, help="Number of CPU cores to use (Default: all available).")
+@click.option("--overwrite", is_flag=True, help="Overwrite output file if it exists.")
+def produce_feature_uniq_minimizer_corr(input_parquet, inspect, taxonomy, output, output_long, bad_samples, cores, overwrite):
+    """
+    Calculates features for unique minimizer coverage.
+    Output is a feature table (one t_id per row) with an accompanying JSON metadata file, and an optional long-format
+    per-sample parquet file (mainly for visualization of the unique minimizer coverage and read count relationship).
+    """
+    start_time = time.time()
+    ctx = click.get_current_context()
+    print_splash()
+    print_invocation_info()
+    print_parameters(ctx.params)
+    
+    try:
+        summary = produce_feature_uniq_minimizer_corr_logic(
+            input_parquet=input_parquet,
+            inspect_csv=inspect,
+            taxonomy_dir=taxonomy,
+            output_file=output,
+            output_long_file=output_long,
+            bad_samples_file=bad_samples,
+            cores=cores,
+            overwrite=overwrite
+        )
+        summary["status"] = "Success"
+        print_footer(start_time, summary)
+    except Exception as e:
+        click.secho(f"Error: {str(e)}", fg="red", err=True)
+        sys.exit(1)
 
 @kraken.command(name="reports", short_help="Merge Kraken reports into a single Parquet file (<REPORTS_PARQUET>).")
 @click.argument("directory", type=click.Path(exists=True, path_type=Path))

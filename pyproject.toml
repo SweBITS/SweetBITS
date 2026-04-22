@@ -14,6 +14,7 @@ dependencies = [
     "numpy>=2.4.2",
     "joltax>=0.3.0",
     "pyarrow",
+    "scipy",
 ]
 
 [project.scripts]
