@@ -51,7 +51,7 @@ def test_minimizer_correlations_basic(tmp_path):
     
     assert row_9606["mm_pearson_n"] == 10
     # Perfect linear relationship should give R = 1.0
-    assert pytest.approx(row_9606["mm_pearson_coeff"], 0.001) == 1.0
+    assert pytest.approx(row_9606["mm_pearson_corr"], 0.001) == 1.0
     # p-value should be very low
     assert row_9606["mm_pearson_p"] < 0.05
     
@@ -85,7 +85,7 @@ def test_minimizer_correlations_safety_filter(tmp_path):
     
     row = result.to_dicts()[0]
     # Pearson should be NaN/None due to n < 6
-    assert row["mm_pearson_coeff"] is None
+    assert row["mm_pearson_corr"] is None
     assert row["mm_pearson_p"] is None
     assert row["mm_pearson_n"] == 5
 
@@ -119,4 +119,52 @@ def test_minimizer_correlations_bad_samples(tmp_path):
     row = result.to_dicts()[0]
     # Should only have 5 samples remaining, so pearson should be NaN
     assert row["mm_pearson_n"] == 5
-    assert row["mm_pearson_coeff"] is None
+    assert row["mm_pearson_corr"] is None
+
+def test_minimizer_correlations_filtered(tmp_path):
+    tax_dir = Path("test_data/joltax_cache")
+    if not tax_dir.exists():
+        pytest.skip("JolTax cache not found")
+        
+    tree = JolTree.load(str(tax_dir))
+    
+    # 20 samples to ensure we have enough for filtering
+    # 1.0% filter of 20 is 0.2, but MINIMUM is 3.
+    # So it should remove the top 3 samples.
+    samples = [f"S{i}" for i in range(1, 21)]
+    
+    # Perfect correlation except for the top 3 samples which are outliers
+    # mm_uniq normally 0.1 * reads
+    reads = [i * 100 for i in range(1, 21)]
+    mm_uniq = [r * 0.1 for r in reads]
+    
+    # Make top 3 (S20, S19, S18) outliers in coverage space
+    # mm_obs_cov = mm_uniq / mm_uniq_db
+    # So we can just increase mm_uniq for them
+    mm_uniq[19] = 1000  # S20
+    mm_uniq[18] = 900   # S19
+    mm_uniq[17] = 800   # S18
+    
+    df = pl.DataFrame({
+        "sample_id": samples,
+        "t_id": [9606] * 20,
+        "taxon_reads": reads,
+        "mm_tot": [u * 2 for u in mm_uniq],
+        "mm_uniq": mm_uniq
+    }).lazy()
+    
+    inspect_df = pl.DataFrame({
+        "tax_id": [9606],
+        "clade_minimizers": [100000]
+    }).lazy()
+    
+    result, _ = generate_minimizer_correlations(df, inspect_df, tree)
+    row = result.filter(pl.col("t_id") == 9606).to_dicts()[0]
+    
+    # Raw correlation should be affected by outliers
+    assert row["mm_pearson_corr"] < 0.99
+    
+    # Filtered correlation should have removed the 3 outliers
+    assert row["mm_pearson_filtered_n"] == 17
+    assert pytest.approx(row["mm_pearson_filtered_corr"], 0.001) == 1.0
+    assert row["mm_pearson_filtered_p"] < 0.05

@@ -147,7 +147,7 @@ def generate_minimizer_correlations(
         .agg([
             pl.when(n >= MIN_OBSERVATIONS_FOR_CORR).then(
                 pl.when(has_variance).then(pl.corr(x, y)).otherwise(None)
-            ).alias("mm_pearson_coeff"),
+            ).alias("mm_pearson_corr"),
             
             pl.when(n >= MIN_OBSERVATIONS_FOR_CORR).then(
                 pl.when(has_variance).then(
@@ -159,7 +159,7 @@ def generate_minimizer_correlations(
 
             pl.when(n >= MIN_OBSERVATIONS_FOR_CORR).then(
                 pl.when(has_variance_f).then(pl.corr(x_f, y_f)).otherwise(None)
-            ).alias("mm_filtered_coeff"),
+            ).alias("mm_pearson_filtered_corr"),
 
             pl.when(n >= MIN_OBSERVATIONS_FOR_CORR).then(
                 pl.when(has_variance_f).then(
@@ -167,7 +167,7 @@ def generate_minimizer_correlations(
                 ).otherwise(None)
             ).alias("_t_stat_f"),
 
-            n_f.alias("mm_filtered_n"),
+            n_f.alias("mm_pearson_filtered_n"),
 
             x.mean().alias("mm_obs_cov_mean"),
             x.median().alias("mm_obs_cov_median"),
@@ -181,10 +181,10 @@ def generate_minimizer_correlations(
                 return_dtype=pl.Float64
             ).alias("mm_pearson_p"),
             
-            pl.struct(["_t_stat_f", "mm_filtered_n"]).map_elements(
-                lambda s: calculate_p_value(s["_t_stat_f"], s["mm_filtered_n"]),
+            pl.struct(["_t_stat_f", "mm_pearson_filtered_n"]).map_elements(
+                lambda s: calculate_p_value(s["_t_stat_f"], s["mm_pearson_filtered_n"]),
                 return_dtype=pl.Float64
-            ).alias("mm_filtered_p")
+            ).alias("mm_pearson_filtered_p")
         ])
         .drop(["_t_stat", "_t_stat_f"])
         .sort("t_id")
@@ -305,7 +305,7 @@ def produce_feature_uniq_minimizer_corr_logic(
 
     return {
         "taxa_processed": summary_df.height,
-        "valid_correlations": summary_df.filter(pl.col("mm_pearson_coeff").is_not_null()).height,
+        "valid_correlations": summary_df.filter(pl.col("mm_pearson_corr").is_not_null()).height,
         "output_format": ext[1:].upper(),
         "long_format_saved": True if output_long_file else False
     }
