@@ -54,9 +54,9 @@ SweetBITS provides several high-performance tools for processing Kraken 2 output
     - *Validation Strategy:* Correlates observed unique minimizer coverage against a probabilistic expectation model. Taxa that fail to correlate across samples (e.g., Pearson R < 0.7) are likely false positives.
     - *Safety Limits:* Automatically applies a floor of $n \ge 6$ samples to ensure statistical stability.
     - *Usage:* Generates a `FEATURE_TABLE` indexed by `t_id` that can be joined to any abundance table via `sweetbits annotate --metadata`.
-- `annotate`: Transforms numeric abundance matrices into human-readable files. Automatically injects full taxonomic lineages from JolTax, calculates mean_signal, and supports two sorting modes:
+- `annotate`: Transforms numeric abundance matrices into human-readable files. Automatically injects full taxonomic lineages from JolTax, optionally calculates summary statistics (sig_avg, sig_med), and supports two sorting modes:
     - `alphabetical`: Hierarchical rank-based sort (Domain -> Phylum -> ...).
-    - `dfs`: Abundance-weighted Depth-First Search traversal (related organisms cluster together, most abundant branches first).
+    - `dfs`: Depth-First Search traversal (related organisms cluster together, branches can be weighted by sig_avg).
     - *External Metadata:* Seamlessly join any number of external TSV/CSV/Parquet files. The files **must** contain a `t_id` column. All other columns are automatically appended, and column collisions are safely resolved. The final table is ordered: `Taxonomy` -> `Metadata` -> `Summary Stats` -> `Samples`.
 - `collect kraken classifications`: Ingests massive Kraken and FASTQ files into heavily compressed, memory-mapped `<KRAKEN_PARQUET>` data lakes using an extremely fast, multiprocessed two-pointer streaming engine. If FASTQ files are omitted, it automatically creates a "Skinny Parquet" that drops sequence payloads to save significant disk space while retaining all taxonomic intelligence.
 - `produce reads`: Efficiently streams reads from Parquet files back into FASTQ.gz format with high throughput and a constant memory profile (OOM-safe). Supports TaxID and temporal filters.

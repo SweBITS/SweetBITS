@@ -53,7 +53,8 @@ def test_annotate_table_basic(tmp_path, mock_taxonomy, base_table):
     res = annotate_table_logic(
         input_table=base_table,
         taxonomy_dir=mock_taxonomy,
-        output_file=out_path
+        output_file=out_path,
+        add_stats=True
     )
     
     assert res["taxa_processed"] == 3
@@ -66,12 +67,12 @@ def test_annotate_table_basic(tmp_path, mock_taxonomy, base_table):
     assert "t_superkingdom" in df.columns or "t_domain" in df.columns
     
     # Check stats columns
-    assert "mean_signal" in df.columns
-    assert "median_signal" not in df.columns
+    assert "sig_avg" in df.columns
+    assert "sig_med" in df.columns
 
     # Check math for 9606 (sample_1=10, sample_2=100) -> mean=55
     row = df.filter(pl.col("t_id") == 9606)
-    assert row["mean_signal"][0] == 55.0    
+    assert row["sig_avg"][0] == 55.0    
     # Check ordering (t_id first)
     assert df.columns[0] == "t_id"
 
@@ -118,14 +119,15 @@ def test_annotate_table_dfs_sorting(tmp_path, mock_taxonomy, base_table):
         input_table=base_table,
         taxonomy_dir=mock_taxonomy,
         output_file=out_path,
-        sort_order="dfs"
+        sort_order="dfs",
+        add_stats=True
     )
     
     df = pl.read_csv(out_path)
     
     # 2 should be at the top if it's the heaviest branch
     assert df.height == 3
-    assert "mean_signal" in df.columns
+    assert "sig_avg" in df.columns
     
     # Verify we can at least run it
     tids = df["t_id"].to_list()
@@ -149,7 +151,8 @@ def test_annotate_table_dfs_sorting_weights(tmp_path, mock_taxonomy):
         input_table=path,
         taxonomy_dir=mock_taxonomy,
         output_file=out_path,
-        sort_order="dfs"
+        sort_order="dfs",
+        add_stats=True
     )
     
     df_res = pl.read_csv(out_path)
@@ -176,7 +179,8 @@ def test_annotate_table_dfs_special_rows(tmp_path, mock_taxonomy):
         input_table=path,
         taxonomy_dir=mock_taxonomy,
         output_file=out_path,
-        sort_order="dfs"
+        sort_order="dfs",
+        add_stats=True
     )
     
     df_res = pl.read_csv(out_path)

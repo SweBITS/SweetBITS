@@ -176,6 +176,7 @@ Amends `<RAW_TABLE>` with JolTax lineage metadata and outputs `<ANNOTATED_TABLE>
   - `--output FILE`: Path to save the annotated table.
   - `--metadata FILE`: (Multiple allowed) Path to external metadata files to join.
   - `--sort-order [alphabetical, dfs]`: Row sorting order (Default: alphabetical).
+  - `--add-stats`: If True, calculates `sig_avg` and `sig_med` summary columns (Default: False).
   - `--overwrite`: Overwrite the output file if it exists.
 
 #### `to_krona`

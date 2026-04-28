@@ -21,14 +21,16 @@ def annotate_table_logic(
     metadata_files: Optional[List[Path]] = None,
     sort_order: str = "alphabetical",
     cores: Optional[int] = None,
-    overwrite: bool = False
+    overwrite: bool = False,
+    add_stats: bool = False
 ) -> Dict[str, Any]:
     """
     Annotates a raw abundance table with taxonomic lineages and external metadata.
 
     Loads a `<RAW_TABLE>`, queries JolTax for full taxonomic lineages (prefixed with 't_'),
-    calculates summary statistics (mean_signal), and joins any user-provided metadata files.
-    Finally, sorts the table hierarchically or via DFS and structures the columns.
+    optionally calculates summary statistics (sig_avg, sig_med), and joins any 
+    user-provided metadata files. Finally, sorts the table hierarchically or 
+    via DFS and structures the columns.
 
     Args:
         input_table    : Path to the raw abundance table (Parquet, CSV, TSV).
@@ -38,6 +40,7 @@ def annotate_table_logic(
         sort_order     : Row sorting order ('alphabetical' or 'dfs').
         cores          : Number of CPU cores to use for Polars operations.
         overwrite      : Whether to overwrite the output file if it exists.
+        add_stats      : Whether to calculate sig_avg and sig_med columns.
 
     Returns:
         A dictionary containing processing statistics:
@@ -205,23 +208,51 @@ def annotate_table_logic(
         metadata_cols.extend(new_m_cols)
 
     # 4. Summary Statistics
-    click.secho("Calculating summary statistics...", fg="cyan", err=True)
-    if sample_cols:
-        df = df.with_columns([
-            pl.mean_horizontal(sample_cols).alias("mean_signal")
-        ])
-    else:
-        df = df.with_columns([
-            pl.lit(0.0).alias("mean_signal")
-        ])
+    stats_cols = []
+    if add_stats:
+        click.secho("Calculating summary statistics...", fg="cyan", err=True)
+        if sample_cols:
+            import polars.datatypes as pldt
+            numeric_types = (pldt.Int8, pldt.Int16, pldt.Int32, pldt.Int64, pldt.UInt8, pldt.UInt16, pldt.UInt32, pldt.UInt64, pldt.Float32, pldt.Float64)
+            numeric_cols = [c for c in sample_cols if df.schema[c] in numeric_types]
+            non_numeric = [c for c in sample_cols if c not in numeric_cols]
+            
+            if non_numeric:
+                click.secho(f"Warning: Excluding non-numeric columns from summary statistics: {non_numeric}", fg="yellow", err=True)
+            
+            if numeric_cols:
+                df = df.with_columns([
+                    pl.mean_horizontal(numeric_cols).alias("sig_avg"),
+                    pl.concat_list(numeric_cols).list.eval(pl.element().median()).list.first().alias("sig_med")
+                ])
+                stats_cols = ["sig_avg", "sig_med"]
+            else:
+                click.secho("Warning: No numeric columns found for summary statistics.", fg="yellow", err=True)
+                df = df.with_columns([
+                    pl.lit(0.0).alias("sig_avg"),
+                    pl.lit(0.0).alias("sig_med")
+                ])
+                stats_cols = ["sig_avg", "sig_med"]
+        else:
+            df = df.with_columns([
+                pl.lit(0.0).alias("sig_avg"),
+                pl.lit(0.0).alias("sig_med")
+            ])
+            stats_cols = ["sig_avg", "sig_med"]
+    elif sort_order == "dfs":
+        click.secho("Warning: DFS sorting requested without summary statistics. Using unweighted taxonomic order.", fg="yellow", err=True)
 
     # 5. Sorting
     if sort_order == "dfs":
-        click.secho("Applying abundance-weighted DFS sorting...", fg="cyan", err=True)
         import numpy as np
 
         # 5.1 Map initial weights to indices
-        table_tid_means = dict(zip(df["t_id"].to_list(), df["mean_signal"].to_list()))
+        if add_stats and "sig_avg" in df.columns:
+            click.secho("Applying abundance-weighted DFS sorting...", fg="cyan", err=True)
+            table_tid_means = dict(zip(df["t_id"].to_list(), df["sig_avg"].to_list()))
+        else:
+            click.secho("Applying unweighted DFS sorting...", fg="cyan", err=True)
+            table_tid_means = {tid: 1.0 for tid in df["t_id"].to_list()}
 
         # We only care about valid taxonomic IDs for the tree logic
         valid_tids = np.array([tid for tid in table_tid_means.keys() if tid not in [UNCLASSIFIED_TID, FILTERED_TID]], dtype=np.uint32)
@@ -361,7 +392,7 @@ def annotate_table_logic(
 
         df = df.sort(sort_exprs, nulls_last=True)
     # 6. Column Ordering
-    ordered_cols = tax_cols + metadata_cols + ["mean_signal"] + sample_cols
+    ordered_cols = tax_cols + metadata_cols + stats_cols + sample_cols
     # Ensure t_id is first if it isn't already (though JolTax annotate puts it first)
     if ordered_cols[0] != "t_id":
         ordered_cols.remove("t_id")

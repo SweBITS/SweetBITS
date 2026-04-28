@@ -85,8 +85,8 @@ You can join any number of external metadata files (CSV, TSV, or Parquet) to you
 - **Column Order:** The final output is strictly ordered to maximize readability:
   1. `t_id` and all taxonomic ranks (`t_scientific_name`, `t_phylum`, etc.)
   2. All external metadata columns (in the order the files were provided)
-  3. `mean_signal` (dynamically calculated)
-  4. The raw sample abundance matrix
+  3. `sig_avg` and `sig_med` (if --add-stats is used)
+  4. The raw input data columns
 
 ```bash
 # Basic taxonomy annotation and hierarchical sorting (alphabetical)
