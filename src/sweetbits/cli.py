@@ -341,7 +341,8 @@ def annotate(input_table, taxonomy, output, metadata, sort_order, add_stats, cor
             cores=cores,
             overwrite=overwrite,
             add_stats=add_stats
-        )        summary["status"] = "Success"
+        )
+        summary["status"] = "Success"
         print_footer(start_time, summary)
     except Exception as e:
         click.secho(f"Error: {str(e)}", fg="red", err=True)
