@@ -131,6 +131,17 @@ sweetbits produce feature uniq-minimizer-corr merged_reports.parquet \
     --overwrite
 ```
 
+### Grand Global K-mer Features (`kmer-global`)
+This is a two-step process: Ingestion followed by Global Feature Extraction. Currently, only the Ingestion step is implemented.
+
+#### Step 1: Ingest K-mers
+```bash
+# Process a single kraken file
+sweetbits collect kraken kmers Ki-2022_01_001.kraken \
+    --taxonomy /path/to/joltax_cache \
+    --output-dir ./kmer_aggregation
+```
+
 ### Full Validation Workflow
 A typical SweetBITS workflow for creating a high-confidence abundance table:
 

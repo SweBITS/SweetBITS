@@ -25,7 +25,8 @@ sweetbits
 ├── collect
 │   └── kraken
 │       ├── reports            <- Gathers multiple kraken .report files
-│       └── classifications    <- Ingests kraken read-by-read output + FASTQ
+│       ├── classifications    <- Ingests kraken read-by-read output + FASTQ
+│       └── kmers              <- Aggregates k-mers for ML features
 │
 ├── produce
 │   ├── reads                  <- Extracts reads back to FASTQ
@@ -50,6 +51,9 @@ SweetBITS provides several high-performance tools for processing Kraken 2 output
     - `canonical`: **Canonical Remainders**. Essentially taxon mode but where reads between canonical ranks have been pushed up to the nearest canonical ancestor (NCA). Eliminates double-counting while conserving mass balance. Supports "non-canonical rank skipping" (Canonical Rank Read Standardization).
     - *Dry Run:* Use `--dry-run` to preview the audit report and taxon retention statistics without saving the output file.
     - *Note:* `--exclude-samples` will issue a warning if an ID in your exclusion file is missing from the dataset.
+- `collect kraken kmers`: Aggregates k-mer hit counts and read length distributions for species-level clades from raw Kraken read-by-read files.
+    - *Purpose:* Transforms slow-to-parse text files into compact, sorted Parquet files optimized for machine learning feature extraction.
+    - *Species Roll-up:* Automatically maps every read (including strains/subspecies) to its parent species-level clade using vectorized JolTax lookups.
 - `produce feature uniq-minimizer-corr`: Calculates species-level and clade-level validation metrics based on unique minimizer coverage.
     - *Validation Strategy:* Correlates observed unique minimizer coverage against a probabilistic expectation model. Taxa that fail to correlate across samples (e.g., Pearson R < 0.7) are likely false positives.
     - *Safety Limits:* Automatically applies a floor of $n \ge 6$ samples to ensure statistical stability.

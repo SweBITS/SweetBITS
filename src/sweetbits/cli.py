@@ -15,6 +15,7 @@ from sweetbits.reads import extract_reads_logic
 from sweetbits.annotate import annotate_table_logic
 from sweetbits.convert import convert_kraken_logic
 from sweetbits.features import produce_feature_uniq_minimizer_corr_logic
+from sweetbits.kmers import aggregate_kraken_kmers_logic
 
 def print_splash():
     """Prints the stylish ASCII logo and developer information."""
@@ -382,6 +383,41 @@ def inspect(target_file):
             click.echo(f"{display_key:20}: {value}")
     except Exception as e:
         click.secho(f"Error reading metadata: {str(e)}", fg="red", err=True)
+        sys.exit(1)
+
+@kraken.command(name="kmers", short_help="Aggregate k-mer and read length distributions from Kraken read-by-read data.")
+@click.argument("kraken_file", type=click.Path(exists=True, path_type=Path))
+@click.option("--output-dir", "-o", type=click.Path(path_type=Path), required=True, help="Directory to save the resulting Parquet files.")
+@click.option("--taxonomy", "-t", type=click.Path(exists=True, path_type=Path), required=True, help="JolTax cache directory.")
+@click.option("--cores", type=int, help="Number of CPU cores to use (Default: all available).")
+@click.option("--overwrite", is_flag=True, help="Overwrite output files if they exist.")
+def collect_kraken_kmers(kraken_file, output_dir, taxonomy, cores, overwrite):
+    """
+    Aggregates k-mer hit counts and read length distributions for species-level clades.
+    Produces two files in the output directory: [sample_id].kmers.parquet and [sample_id].read_lengths.parquet.
+    """
+    start_time = time.time()
+    ctx = click.get_current_context()
+    print_splash()
+    print_invocation_info()
+    print_parameters(ctx.params)
+    
+    try:
+        summary = aggregate_kraken_kmers_logic(
+            kraken_file=kraken_file,
+            output_dir=output_dir,
+            taxonomy_dir=taxonomy,
+            cores=cores,
+            overwrite=overwrite
+        )
+        if summary.get("status") == "Success":
+            summary["status"] = "Success"
+            print_footer(start_time, summary)
+        else:
+            click.secho(f"Processing finished with status: {summary.get('status')}", fg="yellow", err=True)
+            print_footer(start_time, summary)
+    except Exception as e:
+        click.secho(f"Error: {str(e)}", fg="red", err=True)
         sys.exit(1)
 
 @kraken.command(name="classifications", short_help="Convert a Kraken 2 and R1/R2 FASTQ files into a <KRAKEN_PARQUET>.")

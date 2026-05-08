@@ -147,6 +147,17 @@ Merges multiple 8-column Kraken reports into a single Parquet file.
   - `--include GLOB`: Pattern to match report files (Default: `*.report`).
   - `--overwrite`: Overwrite the output file if it exists.
 
+#### `collect kraken kmers`
+Aggregates k-mer hit counts and read length distributions for species-level clades from Kraken read-by-read data.
+- **Inputs:** `<KRAKEN_FILE>` (read-by-read output).
+- **Outputs:** `<KMER_AGG_PARQUET>` and `<READ_LEN_PARQUET>`.
+- **Arguments:**
+  - `KRAKEN_FILE`: Path to the Kraken read-by-read output (can be `.gz`).
+  - `--output-dir DIR`: Directory to save the resulting Parquet files.
+  - `--taxonomy DIR`: JolTax cache directory.
+  - `--cores INT`: Number of CPU cores to use.
+  - `--overwrite`: Overwrite existing output files.
+
 #### `produce table`
 Outputs abundance tables with `t_id` as the index and samples (YYYY_WW) as columns. Uses the `calc_clade_sum` algorithm for dynamic recursive filtering and clade calculation.
 - **Inputs:** `<REPORT_PARQUET>`
@@ -180,6 +191,7 @@ Amends `<RAW_TABLE>` with JolTax lineage metadata and outputs `<ANNOTATED_TABLE>
   - `--overwrite`: Overwrite the output file if it exists.
 
 #### `to_krona`
+
 Generates Krona plots from abundance tables. Needs further discussion.
 
 ### Inspection Tools
@@ -246,6 +258,8 @@ Instead of embedding metadata in the Parquet header, SweetBITS uses a Strict Mod
 6. [x] Implement `annotate` for taxonomic annotation and sorting.
 7. [x] Implement Parquet version compatibility checking.
 8. [x] Implement `collect kraken classifications` (Ingestion from raw Kraken/FASTQ).
-9. [ ] Implement peak memory reporting for Windows (currently Unix-only).
-10. [ ] Future: `coda` command suite for Compositional Data Analysis.
-11. [x] **Bugfix:** Update `calculate_canonical_remainders` in `canonical.py` to not hardcode `global_root_idx = 0` and safeguard `parent_indices = tree.parents[active_canonical_subset]` against `-1` to prevent silent indexing bugs if the tree root changes.
+9. [x] Implement `collect kraken kmers` (Aggregation for ML features).
+10. [ ] Implement `produce feature kmer-global` (Grand Global k-mer features).
+11. [ ] Implement peak memory reporting for Windows (currently Unix-only).
+12. [ ] Future: `coda` command suite for Compositional Data Analysis.
+13. [x] **Bugfix:** Update `calculate_canonical_remainders` in `canonical.py` to not hardcode `global_root_idx = 0` and safeguard `parent_indices = tree.parents[active_canonical_subset]` against `-1` to prevent silent indexing bugs if the tree root changes.
