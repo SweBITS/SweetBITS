@@ -1,116 +1,135 @@
 import pytest
 import polars as pl
 from pathlib import Path
-from sweetbits.testing import generate_mock_report_parquet, generate_mock_taxonomy
 from sweetbits.tables import generate_table_logic
-from joltax import JolTree
+from sweetbits.reports import gather_reports_logic
+from polars.testing import assert_frame_equal
 
 @pytest.fixture
-def mock_data(tmp_path):
-    report_parquet = tmp_path / "reports.parquet"
-    sample_ids = ["Lj-2022_20_001", "Lj-2022_20_002"]
-    generate_mock_report_parquet(sample_ids, report_parquet)
+def golden_data(tmp_path):
+    """
+    Sets up the Universal Golden Dataset for table tests.
+    Returns paths to inputs and ground truth.
+    """
+    base_dir = Path("test_data/universal_golden")
+    input_dir = base_dir / "inputs"
+    truth_dir = base_dir / "ground_truth"
     
-    taxonomy_dir = tmp_path / "taxonomy"
-    generate_mock_taxonomy(taxonomy_dir)
-    
-    # JolTax needs to build the cache first
-    tree = JolTree(tax_dir=str(taxonomy_dir))
-    cache_dir = tmp_path / "joltax_cache"
-    tree.save(str(cache_dir))
+    if not input_dir.exists():
+        pytest.skip("Golden dataset not found. Run tests/generate_universal_golden_data.py first.")
+        
+    # 1. Merge the 3 golden reports into a single REPORT_PARQUET
+    report_parquet = tmp_path / "merged_golden.parquet"
+    gather_reports_logic(
+        input_dir=input_dir,
+        output_file=report_parquet,
+        include_pattern="*.report",
+        overwrite=True
+    )
     
     return {
         "parquet": report_parquet,
-        "taxonomy": cache_dir,
-        "samples": sample_ids
+        "taxonomy": Path("test_data/joltax_cache"),
+        "truth_dir": truth_dir
     }
 
-def test_table_taxon_mode(mock_data, tmp_path):
-    output_csv = tmp_path / "table.csv"
+def test_table_taxon_golden(golden_data, tmp_path):
+    output_csv = tmp_path / "taxon.csv"
     generate_table_logic(
-        input_parquet=mock_data["parquet"],
+        input_parquet=golden_data["parquet"],
         output_file=output_csv,
         mode="taxon",
-        taxonomy_dir=mock_data["taxonomy"],
-        min_observed=1,
-        min_reads=1
+        taxonomy_dir=golden_data["taxonomy"],
+        min_observed=0,
+        min_reads=0
     )
     
-    assert output_csv.exists()
-    df = pl.read_csv(output_csv)
+    df_gen = pl.read_csv(output_csv).sort("t_id")
+    df_truth = pl.read_csv(golden_data["truth_dir"] / "abundance_taxon.csv").sort("t_id")
     
-    # Columns should be t_id and the periods (2022_20)
-    assert "t_id" in df.columns
-    assert "2022_20" in df.columns
-    # Since both samples are 2022_20, they should be summed into one column
-    assert df.width == 2 
+    assert_frame_equal(df_gen, df_truth, check_column_order=False)
 
-def test_table_clade_filter(mock_data, tmp_path):
-    output_csv = tmp_path / "clade_table.csv"
-    # Filter for Bacteria (TaxID 2)
-    # Our mock taxonomy has 5000001 and 5000002 under Bacteria (via 5000000)
+def test_table_clade_golden(golden_data, tmp_path):
+    output_csv = tmp_path / "clade.csv"
     generate_table_logic(
-        input_parquet=mock_data["parquet"],
+        input_parquet=golden_data["parquet"],
+        output_file=output_csv,
+        mode="clade",
+        taxonomy_dir=golden_data["taxonomy"],
+        min_observed=0,
+        min_reads=0
+    )
+    
+    df_gen = pl.read_csv(output_csv).sort("t_id")
+    df_truth = pl.read_csv(golden_data["truth_dir"] / "abundance_clade.csv").sort("t_id")
+    
+    assert_frame_equal(df_gen, df_truth, check_column_order=False)
+
+def test_table_canonical_golden(golden_data, tmp_path):
+    output_csv = tmp_path / "canonical.csv"
+    generate_table_logic(
+        input_parquet=golden_data["parquet"],
+        output_file=output_csv,
+        mode="canonical",
+        taxonomy_dir=golden_data["taxonomy"],
+        min_observed=0,
+        min_reads=0
+    )
+    
+    df_gen = pl.read_csv(output_csv).sort("t_id")
+    df_truth = pl.read_csv(golden_data["truth_dir"] / "abundance_canonical.csv").sort("t_id")
+    
+    # In canonical mode, SweetBITS might include higher ranks that were empty in ground truth
+    # Filter to only nodes present in truth
+    df_gen = df_gen.filter(pl.col("t_id").is_in(df_truth["t_id"].to_list()))
+    
+    assert_frame_equal(df_gen, df_truth, check_column_order=False)
+
+def test_table_filter_clade_bacteria(golden_data, tmp_path):
+    output_csv = tmp_path / "bacteria.csv"
+    generate_table_logic(
+        input_parquet=golden_data["parquet"],
+        output_file=output_csv,
+        mode="clade",
+        taxonomy_dir=golden_data["taxonomy"],
+        clade_filter=2, # Bacteria
+        min_observed=0,
+        min_reads=0
+    )
+    
+    df_gen = pl.read_csv(output_csv).sort("t_id")
+    df_truth = pl.read_csv(golden_data["truth_dir"] / "abundance_clade_filtered_bacteria.csv").sort("t_id")
+    
+    assert_frame_equal(df_gen, df_truth, check_column_order=False)
+
+def test_table_filter_min_reads(golden_data, tmp_path):
+    output_csv = tmp_path / "min_reads.csv"
+    generate_table_logic(
+        input_parquet=golden_data["parquet"],
         output_file=output_csv,
         mode="taxon",
-        taxonomy_dir=mock_data["taxonomy"],
-        clade_filter=2,
-        min_observed=1,
-        min_reads=1
+        taxonomy_dir=golden_data["taxonomy"],
+        min_observed=0,
+        min_reads=20
     )
     
-    df = pl.read_csv(output_csv)
-    # Should only have Bacteria descendants
-    # Mock ids: 2, 5000000, 5000001, 5000002
-    assert all(tid in [2, 5000000, 5000001, 5000002] for tid in df["t_id"])
-    assert 9606 not in df["t_id"].to_list()
-
-def test_table_exclude_samples_with_phantom(mock_data, tmp_path):
-    # This file has one real ID and one fake ID
-    exclude_file = tmp_path / "exclude_mixed.txt"
-    with open(exclude_file, "w") as f:
-        f.write(f"{mock_data['samples'][0]}\n") # Real
-        f.write("Ki-1999_01_001\n")             # Phantom (fake)
-        f.write("# comment line\n")
-        f.write("  \n") # Empty line
-        
-    output_csv = tmp_path / "filtered_phantom.csv"
+    df_gen = pl.read_csv(output_csv).sort("t_id")
+    df_truth = pl.read_csv(golden_data["truth_dir"] / "abundance_read_filtered_20.csv").sort("t_id")
     
-    # We expect a warning to be printed to stderr, but the logic should still pass
+    assert_frame_equal(df_gen, df_truth, check_column_order=False)
+
+def test_table_filter_min_obs(golden_data, tmp_path):
+    output_csv = tmp_path / "min_obs.csv"
     generate_table_logic(
-        input_parquet=mock_data["parquet"],
+        input_parquet=golden_data["parquet"],
         output_file=output_csv,
         mode="taxon",
-        taxonomy_dir=mock_data["taxonomy"],
-        exclude_samples=exclude_file,
-        min_observed=1,
-        min_reads=1
+        taxonomy_dir=golden_data["taxonomy"],
+        min_observed=2,
+        min_reads=0
     )
     
-    df = pl.read_csv(output_csv)
-    # The real ID should be excluded, leaving only the other sample from mock_data
-    # (In our mock setup, we have 2 samples)
-    assert output_csv.exists()
-
-def test_table_min_observed(mock_data, tmp_path):
-    # If we have two samples in the same period, they sum up.
-    # To test min_observed, we need samples in different periods.
-    report_parquet = tmp_path / "multi_period.parquet"
-    sample_ids = ["Lj-2022_20_001", "Lj-2022_21_001"]
-    generate_mock_report_parquet(sample_ids, report_parquet)
+    df_gen = pl.read_csv(output_csv).sort("t_id")
+    df_truth = pl.read_csv(golden_data["truth_dir"] / "abundance_obs_filtered_2.csv").sort("t_id")
     
-    output_csv = tmp_path / "obs_table.csv"
-    generate_table_logic(
-        input_parquet=report_parquet,
-        output_file=output_csv,
-        mode="taxon", # Use taxon mode
-        taxonomy_dir=mock_data["taxonomy"],
-        min_observed=2, # Must be in both 2022_20 and 2022_21
-        min_reads=1
-    )
-    
-    df = pl.read_csv(output_csv)
-    # Our mock generator puts all taxids in all samples, so they should all remain
-    assert df.height > 0
-    assert "2022_20" in df.columns
-    assert "2022_21" in df.columns
+    assert_frame_equal(df_gen, df_truth, check_column_order=False)

@@ -11,8 +11,6 @@ from pathlib import Path
 from sweetbits.utils import parse_sample_id
 from sweetbits.metadata import get_standard_metadata, save_companion_metadata
 
-# ... (Existing generate_mock_kraken_parquet and others) ...
-
 def generate_mock_kraken_report_file(output_path: Path, format: str = "HYPERLOGLOG"):
     """
     Generates a mock Kraken report file.
@@ -40,7 +38,6 @@ def generate_mock_kraken_report_file(output_path: Path, format: str = "HYPERLOGL
         for line in lines:
             f.write(line + "\n")
 
-# Copying back the rest of the file to ensure it's complete
 def generate_random_dna(length: int) -> str:
     return "".join(random.choice("ACGT") for _ in range(length))
 
@@ -63,7 +60,7 @@ def generate_mock_kraken_parquet(
         r1_kmers = max(0, r1_len - k + 1)
         r2_kmers = max(0, r2_len - k + 1)
         kmers_total = max(1, r1_kmers + r2_kmers)
-        t_id = random.choice([9606, 10090, 5000001, 5000002])
+        t_id = random.choice([9606, 10090, 5000101, 5000102])
         data.append({
             "sample_id": sample_id, "year": sample_info["year"], "week": sample_info["week"],
             "read_id": f"read_{i}", "r1_qual": generate_random_qual(r1_len), "r2_qual": generate_random_qual(r2_len),
@@ -98,7 +95,7 @@ def generate_mock_report_parquet(
 ) -> pl.DataFrame:
     """Generates mock <REPORT_PARQUET> data."""
     data = []
-    taxids = [9606, 10090, 5000000, 5000001, 5000002]
+    taxids = [9606, 10090, 562, 5000101, 5000102]
     for sid in sample_ids:
         info = parse_sample_id(sid)
         for tid in taxids:
@@ -122,23 +119,83 @@ def generate_mock_report_parquet(
     return df
 
 def generate_mock_taxonomy(output_dir: Path):
-    """Generates a minimal NCBITaxonomy-style names.dmp and nodes.dmp."""
+    """Generates an expansive, complex NCBITaxonomy-style tree spanning the tree of life with 100+ species."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    nodes = [
-        "1\t|\t1\t|\tno rank\t|", "2\t|\t1\t|\tsuperkingdom\t|", "2759\t|\t1\t|\tsuperkingdom\t|",
-        "9606\t|\t2759\t|\tspecies\t|", "10090\t|\t2759\t|\tspecies\t|", "5000000\t|\t2\t|\tgenus\t|",
-    ]
-    names = [
-        "1\t|\troot\t|\t\t|\tscientific name\t|", "2\t|\tBacteria\t|\t\t|\tscientific name\t|",
-        "2759\t|\tEukaryota\t|\t\t|\tscientific name\t|", "9606\t|\tHomo sapiens\t|\t\t|\tscientific name\t|",
-        "10090\t|\tMus musculus\t|\t\t|\tscientific name\t|", "5000000\t|\tMockGenus\t|\t\t|\tscientific name\t|",
+    
+    # Format: TaxID, ParentID, Rank, Name
+    tax_data = [
+        (1, 1, "no rank", "root"),
+        # Domain: Eukaryota
+        (2759, 1, "superkingdom", "Eukaryota"),
+        (33208, 2759, "kingdom", "Metazoa"),
+        (7711, 33208, "phylum", "Chordata"),
+        (40674, 7711, "class", "Mammalia"),
+        (9443, 40674, "order", "Primates"),
+        (9605, 9443, "genus", "Homo"),
+        (9606, 9605, "species", "Homo sapiens"),
+        (9989, 40674, "order", "Rodentia"),
+        (10088, 9989, "family", "Muridae"),
+        (10089, 10088, "genus", "Mus"),
+        (10090, 10089, "species", "Mus musculus"),
+        (10114, 10089, "species", "Mus spretus"),
+        (33090, 2759, "kingdom", "Viridiplantae"),
+        (3193, 33090, "phylum", "Streptophyta"),
+        (3700, 3193, "order", "Brassicales"),
+        (3701, 3700, "genus", "Arabidopsis"),
+        (3702, 3701, "species", "Arabidopsis thaliana"),
+        
+        # Domain: Bacteria
+        (2, 1, "superkingdom", "Bacteria"),
+        (1224, 2, "phylum", "Proteobacteria"),
+        (28211, 1224, "class", "Alphaproteobacteria"),
+        (91347, 28211, "order", "Enterobacterales"),
+        (543, 91347, "family", "Enterobacteriaceae"),
+        (561, 543, "genus", "Escherichia"),
+        (562, 561, "species", "Escherichia coli"),
+        (511145, 562, "strain", "Escherichia coli str. K-12"), 
+        (590, 543, "genus", "Salmonella"),
+        (28901, 590, "species", "Salmonella enterica"),
+        (1239, 2, "phylum", "Firmicutes"),
+        (91061, 1239, "class", "Bacilli"),
+        (1385, 91061, "order", "Bacillales"),
+        (1279, 1385, "family", "Staphylococcaceae"),
+        (1281, 1279, "genus", "Staphylococcus"), 
+        (1280, 1281, "species", "Staphylococcus aureus"),
+        
+        # Domain: Archaea
+        (2157, 1, "superkingdom", "Archaea"),
+        (28890, 2157, "phylum", "Euryarchaeota"),
+        (183925, 28890, "class", "Methanobacteria"),
+        (2158, 183925, "order", "Methanobacteriales"),
+        (2159, 2158, "family", "Methanobacteriaceae"),
+        (2162, 2159, "genus", "Methanobrevibacter"),
+        (2168, 2162, "species", "Methanobrevibacter smithii"),
+        
+        # Domain: Viruses
+        (10239, 1, "superkingdom", "Viruses"),
+        (11118, 10239, "family", "Coronaviridae"),
+        (11119, 11118, "genus", "Betacoronavirus"),
+        (694009, 11119, "species", "Severe acute respiratory syndrome-related coronavirus"),
     ]
     
-    # Add 18 more mock species to reach 20 total species
-    for i in range(1, 19):
-        tid = 5000000 + i
-        nodes.append(f"{tid}\t|\t5000000\t|\tspecies\t|")
-        names.append(f"{tid}\t|\tUnknown_{tid}\t|\t\t|\tscientific name\t|")
+    # --- Generate Mass Dummy Lineages ---
+    # We'll create 10 phyla under Bacteria, each with 2 genera, each with 5 species.
+    # Total 10 * 2 * 5 = 100 species.
+    for p in range(10):
+        p_tid = 6000000 + p
+        tax_data.append((p_tid, 2, "phylum", f"DummyPhylum_{p}"))
+        for g in range(2):
+            g_tid = p_tid * 10 + g
+            tax_data.append((g_tid, p_tid, "genus", f"DummyGenus_{p}_{g}"))
+            for s in range(5):
+                s_tid = g_tid * 10 + s
+                tax_data.append((s_tid, g_tid, "species", f"DummySpecies_{p}_{g}_{s}"))
+
+    nodes = []
+    names = []
+    for tid, pid, rank, name in tax_data:
+        nodes.append(f"{tid}\t|\t{pid}\t|\t{rank}\t|")
+        names.append(f"{tid}\t|\t{name}\t|\t\t|\tscientific name\t|")
 
     with open(output_dir / "nodes.dmp", "w") as f:
         for line in nodes: f.write(line + "\n")
