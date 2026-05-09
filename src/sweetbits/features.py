@@ -86,7 +86,10 @@ def calculate_weighted_stats(
             pl.col(f"mean_{suffix}").first().alias("mean")
         ])
         .with_columns(
-            (pl.col("stdev") / pl.col("mean")).alias(f"cv_{suffix}")
+            pl.when(pl.col("mean") != 0)
+            .then(pl.col("stdev") / pl.col("mean"))
+            .otherwise(None)
+            .alias(f"cv_{suffix}")
         )
         .drop(["stdev", "mean"])
     )
@@ -132,7 +135,7 @@ def produce_feature_kmer_global_logic(
     grand_lf = (
         pl.scan_parquet(input_pattern)
         .group_by(["t_id", "kmer_tax_id"])
-        .agg(pl.col("kmer_count").sum())
+        .agg(pl.col("kmer_count").cast(pl.UInt64).sum())
     )
 
     # 3. Label Hits (Clade vs Lineage vs Misclassified)
@@ -141,13 +144,13 @@ def produce_feature_kmer_global_logic(
     # Join with node data for both the target t_id and the k-mer hit
     labeled_lf = (
         grand_lf
-        .join(node_data.lazy().rename({"t_id": "target_t_id", "depth": "root_depth", "entry": "root_entry", "exit": "root_exit"}), left_on="t_id", right_on="target_t_id")
-        .join(node_data.lazy().rename({"t_id": "kmer_tax_id", "depth": "kmer_depth", "entry": "kmer_entry", "exit": "kmer_exit"}), on="kmer_tax_id")
+        .join(node_data.lazy().rename({"t_id": "target_t_id", "depth": "root_depth", "entry": "root_entry", "exit": "root_exit"}), left_on="t_id", right_on="target_t_id", how="left")
+        .join(node_data.lazy().rename({"t_id": "kmer_tax_id", "depth": "kmer_depth", "entry": "kmer_entry", "exit": "kmer_exit"}), on="kmer_tax_id", how="left")
         .with_columns([
             # is_in_clade: kmer hit is descendant of target (or target itself)
-            ((pl.col("kmer_entry") >= pl.col("root_entry")) & (pl.col("kmer_exit") <= pl.col("root_exit"))).alias("is_in_clade"),
+            ((pl.col("kmer_entry") >= pl.col("root_entry")) & (pl.col("kmer_exit") <= pl.col("root_exit"))).fill_null(False).alias("is_in_clade"),
             # is_in_lineage: target is descendant of kmer hit (kmer hit is ancestor)
-            ((pl.col("root_entry") >= pl.col("kmer_entry")) & (pl.col("root_exit") <= pl.col("kmer_exit"))).alias("is_in_lineage")
+            ((pl.col("root_entry") >= pl.col("kmer_entry")) & (pl.col("root_exit") <= pl.col("kmer_exit"))).fill_null(False).alias("is_in_lineage")
         ])
     )
 
@@ -169,13 +172,25 @@ def produce_feature_kmer_global_logic(
             (pl.col("grand_exclade_kmers") - pl.col("grand_lineage_kmers")).alias("grand_misclassified_kmers")
         ])
         .with_columns([
+            (pl.col("grand_total_kmers") - pl.col("grand_classified_kmers")).alias("grand_unclassified_kmers")
+        ])
+        .with_columns([
             (pl.col("grand_clade_kmers") / pl.col("grand_classified_kmers")).alias("grand_clade_to_classified_kmer_ratio"),
             (pl.col("grand_lineage_kmers") / pl.col("grand_classified_kmers")).alias("grand_lineage_to_classified_kmer_ratio"),
             (pl.col("grand_misclassified_kmers") / pl.col("grand_classified_kmers")).alias("grand_misclassified_to_classified_kmer_ratio"),
+            (pl.col("grand_root_kmers") / pl.col("grand_classified_kmers")).alias("grand_root_to_classified_kmer_ratio"),
             (pl.when(pl.col("grand_misclassified_kmers") > 0)
              .then((pl.col("grand_clade_kmers") + pl.col("grand_lineage_kmers")) / pl.col("grand_misclassified_kmers"))
              .otherwise(1.0)).alias("grand_supporting_to_misclassified_kmer_ratio"),
-            (pl.col("grand_clade_kmers") / pl.col("grand_total_kmers")).alias("grand_clade_to_total_kmer_ratio")
+            (pl.col("grand_clade_kmers") / pl.col("grand_total_kmers")).alias("grand_clade_to_total_kmer_ratio"),
+            (pl.col("grand_classified_kmers") / pl.col("grand_total_kmers")).alias("grand_classified_to_total_kmer_ratio"),
+            (pl.col("grand_lineage_kmers") / pl.col("grand_total_kmers")).alias("grand_lineage_to_total_kmer_ratio"),
+            (pl.col("grand_root_kmers") / pl.col("grand_total_kmers")).alias("grand_root_to_total_kmer_ratio"),
+            (pl.col("grand_misclassified_kmers") / pl.col("grand_total_kmers")).alias("grand_misclassified_to_total_kmer_ratio"),
+            (pl.col("grand_root_kmers") / pl.col("grand_exclade_kmers")).alias("grand_root_to_exclade_kmer_ratio"),
+            (pl.col("grand_lineage_kmers") / pl.col("grand_exclade_kmers")).alias("grand_lineage_to_exclade_kmer_ratio"),
+            (pl.col("grand_exclade_kmers") / pl.col("grand_total_kmers")).alias("grand_exclade_to_total_kmer_ratio"),
+            ((pl.col("grand_clade_kmers") + pl.col("grand_lineage_kmers")) / pl.col("grand_total_kmers")).alias("grand_supporting_to_total_kmer_ratio")
         ])
     )
 
@@ -211,13 +226,14 @@ def produce_feature_kmer_global_logic(
     # Join the LCA data back, and calculate distances using the depths ALREADY in dist_base_lf
     dist_lf = dist_base_lf.join(pair_metrics_df.lazy(), on=["t_id", "kmer_tax_id"]).with_columns([
         ((pl.col("root_depth") - pl.col("lca_depth")) + (pl.col("kmer_depth") - pl.col("lca_depth"))).alias("distance"),
-        (pl.col("lca_depth") / (pl.col("root_depth") - 1)).alias("relative_lca_depth"),
-        (pl.col("kmer_depth") / (pl.col("root_depth") - 1)).alias("relative_k_depth")
+        (pl.col("lca_depth") / (pl.col("root_depth").cast(pl.Int32) - 1)).alias("relative_lca_depth"),
+        (pl.col("kmer_depth") / (pl.col("root_depth").cast(pl.Int32) - 1)).alias("relative_k_depth")
     ])
     
     # NEW: Isolate strictly misclassified k-mers (exclude lineage hits) 
     # to maintain parity with the original script's misclassified metrics.
-    misclassified_dist_lf = dist_lf.filter(~pl.col("is_in_lineage"))
+    # FIX: Collect into memory ONCE, then convert back to lazy to prevent 4x Parquet scans
+    misclassified_dist_lf = dist_lf.filter(~pl.col("is_in_lineage")).collect().lazy()
     
     # Calculate weighted stats for the metrics using the strictly misclassified hits
     dist_stats = calculate_weighted_stats(misclassified_dist_lf, "distance", "kmer_count", "t_id", "grand_misclassified_kmer_distance")
@@ -225,30 +241,39 @@ def produce_feature_kmer_global_logic(
     lca_stats = calculate_weighted_stats(misclassified_dist_lf, "relative_lca_depth", "kmer_count", "t_id", "grand_misclassified_kmer_relative_lca_depth")
     
     # Lineage-only stats
-    lineage_dist_lf = dist_lf.filter(pl.col("is_in_lineage"))
+    # FIX: Apply the same eager-to-lazy trick here
+    lineage_dist_lf = dist_lf.filter(pl.col("is_in_lineage")).collect().lazy()
     lineage_stats = calculate_weighted_stats(lineage_dist_lf, "relative_k_depth", "kmer_count", "t_id", "grand_lineage_kmer_relative_depth")
 
     # 6. Top Hits
     click.secho("Phase 4/4: Identifying top taxonomic competitors...", fg="cyan", err=True)
     
-    misclassified_pooled = dist_lf.filter(~pl.col("is_in_lineage")).collect()
+    exclade_pooled = dist_lf.collect()
+    misclassified_pooled = exclade_pooled.filter(~pl.col("is_in_lineage"))
     
     top_hits = (
         misclassified_pooled
-        .group_by(["t_id", "kmer_tax_id"])
-        .agg(pl.col("kmer_count").sum())
-        # FIX: perform sort inside the group context to guarantee accurate top 5
         .group_by("t_id")
         .agg([
             pl.col("kmer_tax_id").sort_by("kmer_count", descending=True).head(5).alias("grand_top_5_misclassified_kmer_tax_ids"),
             (pl.col("kmer_count").sort_by("kmer_count", descending=True).head(5) / pl.col("kmer_count").sum()).alias("grand_top_5_misclassified_kmer_shares")
         ])
+    ).join(
+        exclade_pooled
+        .group_by("t_id")
+        .agg([
+            pl.col("kmer_tax_id").sort_by("kmer_count", descending=True).head(5).alias("grand_top_5_exclade_kmer_tax_ids"),
+            (pl.col("kmer_count").sort_by("kmer_count", descending=True).head(5) / pl.col("kmer_count").sum()).alias("grand_top_5_exclade_kmer_shares")
+        ]), on="t_id", how="full"
     )
     
     # Map names for top hits in bulk
     all_top_ids = []
-    for ids in top_hits["grand_top_5_misclassified_kmer_tax_ids"]:
-        all_top_ids.extend(ids.to_list())
+    if "grand_top_5_misclassified_kmer_tax_ids" in top_hits.columns:
+        all_top_ids.extend(top_hits["grand_top_5_misclassified_kmer_tax_ids"].explode().drop_nulls().unique().to_list())
+    if "grand_top_5_exclade_kmer_tax_ids" in top_hits.columns:
+        all_top_ids.extend(top_hits["grand_top_5_exclade_kmer_tax_ids"].explode().drop_nulls().unique().to_list())
+    all_top_ids = list(set(all_top_ids))
     
     if all_top_ids:
         names_df = tree.annotate(list(set(all_top_ids))).select(["t_id", "t_scientific_name"])
@@ -256,12 +281,16 @@ def produce_feature_kmer_global_logic(
     else:
         names_map = {}
     
-    top_hits = top_hits.with_columns(
+    top_hits = top_hits.with_columns([
         pl.col("grand_top_5_misclassified_kmer_tax_ids").map_elements(
-            lambda ids: [names_map.get(tid, "Unknown") for tid in ids],
+            lambda ids: [names_map.get(tid, "Unknown") for tid in ids] if ids is not None else None,
             return_dtype=pl.List(pl.String)
-        ).alias("grand_top_5_misclassified_kmer_names")
-    )
+        ).alias("grand_top_5_misclassified_kmer_names"),
+        pl.col("grand_top_5_exclade_kmer_tax_ids").map_elements(
+            lambda ids: [names_map.get(tid, "Unknown") for tid in ids] if ids is not None else None,
+            return_dtype=pl.List(pl.String)
+        ).alias("grand_top_5_exclade_kmer_names")
+    ])
 
     # 7. Final Join & Save
     click.secho(f"Merging all features into {output_file.name}...", fg="cyan", err=True)
@@ -282,7 +311,10 @@ def produce_feature_kmer_global_logic(
         final_df = final_df.with_columns([
             pl.col("grand_top_5_misclassified_kmer_tax_ids").list.eval(pl.element().cast(pl.String)).list.join(";"),
             pl.col("grand_top_5_misclassified_kmer_names").list.join(";"),
-            pl.col("grand_top_5_misclassified_kmer_shares").list.eval(pl.element().round(4).cast(pl.String)).list.join(";")
+            pl.col("grand_top_5_misclassified_kmer_shares").list.eval(pl.element().round(4).cast(pl.String)).list.join(";"),
+            pl.col("grand_top_5_exclade_kmer_tax_ids").list.eval(pl.element().cast(pl.String)).list.join(";"),
+            pl.col("grand_top_5_exclade_kmer_names").list.join(";"),
+            pl.col("grand_top_5_exclade_kmer_shares").list.eval(pl.element().round(4).cast(pl.String)).list.join(";")
         ])
         if ext == ".tsv":
             final_df.write_csv(output_file, separator="\t")
