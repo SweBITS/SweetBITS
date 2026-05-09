@@ -47,6 +47,7 @@ def calculate_weighted_stats(
     Calculates weighted Mean, Median, CV, P05, and P95 for a metric.
     """
     # 1. Weighted Mean
+    # FIXED: Use .alias() directly on the expression
     mean_lf = lf.group_by(group_col).agg(
         ((pl.col(metric_col) * pl.col(weight_col)).sum() / pl.col(weight_col).sum()).alias(f"mean_{suffix}")
     )
@@ -142,7 +143,9 @@ def produce_feature_kmer_global_logic(
     click.secho("Phase 1/4: Labeling k-mer hits (clade vs lineage)...", fg="cyan", err=True)
     
     # Join with node data for both the target t_id and the k-mer hit
-    labeled_lf = (
+    # FIX: Eagerly collect this trunk into memory here. This stops Polars from
+    # re-evaluating the Parquet scan 5 separate times downstream.
+    labeled_eager_df = (
         grand_lf
         .join(node_data.lazy().rename({"t_id": "target_t_id", "depth": "root_depth", "entry": "root_entry", "exit": "root_exit"}), left_on="t_id", right_on="target_t_id", how="left")
         .join(node_data.lazy().rename({"t_id": "kmer_tax_id", "depth": "kmer_depth", "entry": "kmer_entry", "exit": "kmer_exit"}), on="kmer_tax_id", how="left")
@@ -152,7 +155,10 @@ def produce_feature_kmer_global_logic(
             # is_in_lineage: target is descendant of kmer hit (kmer hit is ancestor)
             ((pl.col("root_entry") >= pl.col("kmer_entry")) & (pl.col("root_exit") <= pl.col("kmer_exit"))).fill_null(False).alias("is_in_lineage")
         ])
-    )
+    ).collect()
+    
+    # Convert back to lazy. From this point forward, the DAG's source is RAM, not the disk.
+    labeled_lf = labeled_eager_df.lazy()
 
     # 4. Calculate Core Counts & Ratios
     click.secho("Phase 2/4: Calculating grand totals and ratios...", fg="cyan", err=True)
@@ -232,8 +238,7 @@ def produce_feature_kmer_global_logic(
     
     # NEW: Isolate strictly misclassified k-mers (exclude lineage hits) 
     # to maintain parity with the original script's misclassified metrics.
-    # FIX: Collect into memory ONCE, then convert back to lazy to prevent 4x Parquet scans
-    misclassified_dist_lf = dist_lf.filter(~pl.col("is_in_lineage")).collect().lazy()
+    misclassified_dist_lf = dist_lf.filter(~pl.col("is_in_lineage"))
     
     # Calculate weighted stats for the metrics using the strictly misclassified hits
     dist_stats = calculate_weighted_stats(misclassified_dist_lf, "distance", "kmer_count", "t_id", "grand_misclassified_kmer_distance")
@@ -241,8 +246,7 @@ def produce_feature_kmer_global_logic(
     lca_stats = calculate_weighted_stats(misclassified_dist_lf, "relative_lca_depth", "kmer_count", "t_id", "grand_misclassified_kmer_relative_lca_depth")
     
     # Lineage-only stats
-    # FIX: Apply the same eager-to-lazy trick here
-    lineage_dist_lf = dist_lf.filter(pl.col("is_in_lineage")).collect().lazy()
+    lineage_dist_lf = dist_lf.filter(pl.col("is_in_lineage"))
     lineage_stats = calculate_weighted_stats(lineage_dist_lf, "relative_k_depth", "kmer_count", "t_id", "grand_lineage_kmer_relative_depth")
 
     # 6. Top Hits
@@ -268,12 +272,10 @@ def produce_feature_kmer_global_logic(
     )
     
     # Map names for top hits in bulk
-    all_top_ids = []
-    if "grand_top_5_misclassified_kmer_tax_ids" in top_hits.columns:
-        all_top_ids.extend(top_hits["grand_top_5_misclassified_kmer_tax_ids"].explode().drop_nulls().unique().to_list())
-    if "grand_top_5_exclade_kmer_tax_ids" in top_hits.columns:
-        all_top_ids.extend(top_hits["grand_top_5_exclade_kmer_tax_ids"].explode().drop_nulls().unique().to_list())
-    all_top_ids = list(set(all_top_ids))
+    all_top_ids = top_hits["grand_top_5_misclassified_kmer_tax_ids"].explode().drop_nulls().unique().to_list()
+    # Add exclade ids too
+    exclade_ids = top_hits["grand_top_5_exclade_kmer_tax_ids"].explode().drop_nulls().unique().to_list()
+    all_top_ids = list(set(all_top_ids + exclade_ids))
     
     if all_top_ids:
         names_df = tree.annotate(list(set(all_top_ids))).select(["t_id", "t_scientific_name"])
