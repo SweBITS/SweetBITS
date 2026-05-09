@@ -32,15 +32,33 @@ This engine pools all k-mer classification data across any number of samples to 
 - **`grand_clade_kmers`**: Total k-mers classified to the target species or its descendants.
 - **`grand_classified_kmers`**: Total k-mers that received *any* taxonomic assignment.
 - **`grand_total_kmers`**: Absolute total of all k-mers (including unclassified).
+- **`grand_unclassified_kmers`**: Total number of k-mers that remained unclassified.
 - **`grand_lineage_kmers`**: Total classified k-mers hitting the taxonomic lineage (e.g., hitting the Genus but not the Species).
+- **`grand_root_kmers`**: Total k-mers hitting the Root (TaxID 1).
 - **`grand_misclassified_kmers`**: K-mers classified outside the species AND outside its lineage (potential noise).
 
 #### B. Evidence Ratios
+These features provide proportions normalized by either **Classified** k-mers or **Total** k-mers.
+
+**Relative to Classified K-mers:**
 - **`grand_clade_to_classified_kmer_ratio`**: Proportion of classified evidence that correctly hits the clade.
 - **`grand_lineage_to_classified_kmer_ratio`**: Proportion of classified evidence hitting the lineage (high-level assignment).
 - **`grand_misclassified_to_classified_kmer_ratio`**: Proportion of classified evidence hitting unrelated taxa.
+- **`grand_root_to_classified_kmer_ratio`**: Proportion of classified evidence at the root.
 - **`grand_supporting_to_misclassified_kmer_ratio`**: Ratio of "Good" hits (Clade + Lineage) to "Bad" hits (Misclassified).
+
+**Relative to Total K-mers (Confidence Scores):**
 - **`grand_clade_to_total_kmer_ratio`**: The global Kraken 2 Confidence Score for this species.
+- **`grand_classified_to_total_kmer_ratio`**: Global classification rate for this taxon's reads.
+- **`grand_lineage_to_total_kmer_ratio`**: Proportion of all k-mers hitting the lineage.
+- **`grand_root_to_total_kmer_ratio`**: Proportion of all k-mers hitting the root.
+- **`grand_misclassified_to_total_kmer_ratio`**: Global misclassification proportion.
+- **`grand_supporting_to_total_kmer_ratio`**: Proportion of all k-mers hitting Clade + Lineage.
+
+**Internal Exclade Ratios:**
+- **`grand_root_to_exclade_kmer_ratio`**: Proportion of off-target hits that were pushed to the root.
+- **`grand_lineage_to_exclade_kmer_ratio`**: Proportion of off-target hits that hit the lineage.
+- **`grand_exclade_to_total_kmer_ratio`**: Proportion of all k-mers hitting anything outside the clade.
 
 #### C. Taxonomic Distance & Depth (Weighted Stats)
 *Metrics: `mean_`, `median_`, `cv_`, `p05_`, `p95_` for:*

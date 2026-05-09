@@ -255,16 +255,16 @@ def produce_feature_kmer_global_logic(
         misclassified_pooled
         .group_by("t_id")
         .agg([
-            pl.col("kmer_tax_id").sort_by("kmer_count", descending=True).head(5).alias("grand_top_5_misclassified_kmer_tax_ids"),
-            (pl.col("kmer_count").sort_by("kmer_count", descending=True).head(5) / pl.col("kmer_count").sum()).alias("grand_top_5_misclassified_kmer_shares")
+            pl.col("kmer_tax_id").sort_by(["kmer_count", "kmer_tax_id"], descending=[True, False]).head(5).alias("grand_top_5_misclassified_kmer_tax_ids"),
+            (pl.col("kmer_count").sort_by(["kmer_count", "kmer_tax_id"], descending=[True, False]).head(5) / pl.col("kmer_count").sum()).alias("grand_top_5_misclassified_kmer_shares")
         ])
     ).join(
         exclade_pooled
         .group_by("t_id")
         .agg([
-            pl.col("kmer_tax_id").sort_by("kmer_count", descending=True).head(5).alias("grand_top_5_exclade_kmer_tax_ids"),
-            (pl.col("kmer_count").sort_by("kmer_count", descending=True).head(5) / pl.col("kmer_count").sum()).alias("grand_top_5_exclade_kmer_shares")
-        ]), on="t_id", how="full"
+            pl.col("kmer_tax_id").sort_by(["kmer_count", "kmer_tax_id"], descending=[True, False]).head(5).alias("grand_top_5_exclade_kmer_tax_ids"),
+            (pl.col("kmer_count").sort_by(["kmer_count", "kmer_tax_id"], descending=[True, False]).head(5) / pl.col("kmer_count").sum()).alias("grand_top_5_exclade_kmer_shares")
+        ]), on="t_id", how="full", coalesce=True
     )
     
     # Map names for top hits in bulk
