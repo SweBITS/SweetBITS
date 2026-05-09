@@ -127,14 +127,19 @@ def generate_mock_taxonomy(output_dir: Path):
     nodes = [
         "1\t|\t1\t|\tno rank\t|", "2\t|\t1\t|\tsuperkingdom\t|", "2759\t|\t1\t|\tsuperkingdom\t|",
         "9606\t|\t2759\t|\tspecies\t|", "10090\t|\t2759\t|\tspecies\t|", "5000000\t|\t2\t|\tgenus\t|",
-        "5000001\t|\t5000000\t|\tspecies\t|", "5000002\t|\t5000000\t|\tspecies\t|",
     ]
     names = [
         "1\t|\troot\t|\t\t|\tscientific name\t|", "2\t|\tBacteria\t|\t\t|\tscientific name\t|",
         "2759\t|\tEukaryota\t|\t\t|\tscientific name\t|", "9606\t|\tHomo sapiens\t|\t\t|\tscientific name\t|",
         "10090\t|\tMus musculus\t|\t\t|\tscientific name\t|", "5000000\t|\tMockGenus\t|\t\t|\tscientific name\t|",
-        "5000001\t|\t5000000\t|\tspecies\t|", "5000002\t|\t5000000\t|\tspecies\t|",
     ]
+    
+    # Add 18 more mock species to reach 20 total species
+    for i in range(1, 19):
+        tid = 5000000 + i
+        nodes.append(f"{tid}\t|\t5000000\t|\tspecies\t|")
+        names.append(f"{tid}\t|\tUnknown_{tid}\t|\t\t|\tscientific name\t|")
+
     with open(output_dir / "nodes.dmp", "w") as f:
         for line in nodes: f.write(line + "\n")
     with open(output_dir / "names.dmp", "w") as f:

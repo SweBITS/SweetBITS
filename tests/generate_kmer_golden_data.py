@@ -2,6 +2,7 @@ import os
 import random
 import math
 import csv
+import numpy as np
 from pathlib import Path
 from joltax import JolTree
 
@@ -25,7 +26,7 @@ def get_weighted_stats(data, value_col, weight_col):
         cum_weight = 0
         for x in sorted_data:
             cum_weight += x[weight_col]
-            if cum_weight > target:
+            if cum_weight >= target:
                 return x[value_col]
         return sorted_data[-1][value_col]
     
@@ -87,10 +88,11 @@ def main():
                 lin_count = random.randint(2, 10)
                 kmer_hits.append((lin_target, lin_count))
                 
-                # Misclassified hit
-                misc_target = int(random.choice(species_tids))
+                # Misclassified hit (can hit ANY node in the tree: species, phylum, domain, etc.)
+                all_tids = tree._index_to_id
+                misc_target = int(random.choice(all_tids))
                 while misc_target in lineage:
-                    misc_target = int(random.choice(species_tids))
+                    misc_target = int(random.choice(all_tids))
                 misc_count = random.randint(1, 5)
                 kmer_hits.append((misc_target, misc_count))
                 
@@ -131,11 +133,21 @@ def main():
             grouped_hits[t_id] = []
         grouped_hits[t_id].append({'k_tid': k_tid, 'count': count})
     
+    # Get node mapping data for O(1) checks
+    # entry/exit times allow determining ancestry instantly
+    indices = tree._get_indices(np.array(tree._index_to_id, dtype=np.uint32))
+    node_lookup = {}
+    for i, tid in enumerate(tree._index_to_id):
+        node_lookup[int(tid)] = {
+            'entry': tree.entry_times[i],
+            'exit': tree.exit_times[i],
+            'depth': tree.depths[i]
+        }
+    
     golden_results = []
     
     for t_id, hits in grouped_hits.items():
-        target_lineage = tree.get_lineage(t_id)
-        target_depth = len(target_lineage) - 1 # Root is 0
+        t_meta = node_lookup[t_id]
         
         counts = {
             'grand_clade_kmers': 0,
@@ -159,11 +171,16 @@ def main():
             if k_tid == 0:
                 continue # Unclassified
                 
-            k_lineage = tree.get_lineage(k_tid) if k_tid > 0 else []
-            k_depth = len(k_lineage) - 1 if k_lineage else 0
+            k_meta = node_lookup.get(k_tid)
+            if not k_meta:
+                continue # Should not happen with valid cache
+                
+            # is_in_clade: k_tid is descendant of t_id (or t_id itself)
+            is_in_clade = (k_meta['entry'] >= t_meta['entry']) and (k_meta['exit'] <= t_meta['exit'])
             
-            is_in_clade = (k_tid in target_lineage) and (target_lineage.index(k_tid) >= target_depth) # Descendant or self
-            is_in_lineage = (k_tid in target_lineage) and (target_lineage.index(k_tid) < target_depth) # Ancestor
+            # is_in_lineage: t_id is descendant of k_tid (k_tid is ancestor)
+            # strictly ancestor: k_tid != t_id
+            is_in_lineage = (t_meta['entry'] >= k_meta['entry']) and (t_meta['exit'] <= k_meta['exit']) and (k_tid != t_id)
             
             if is_in_clade:
                 counts['grand_clade_kmers'] += count
@@ -172,21 +189,20 @@ def main():
                 exclade_data.append({'kmer_tax_id': k_tid, 'kmer_count': count})
                 if is_in_lineage:
                     counts['grand_lineage_kmers'] += count
-                    lineage_dist_data.append({'val': k_depth / max(target_depth - 1, 1), 'weight': count})
+                    lineage_dist_data.append({'val': k_meta['depth'] / max(t_meta['depth'] - 1, 1), 'weight': count})
                 else:
                     misclassified_data.append({'kmer_tax_id': k_tid, 'kmer_count': count})
                     
                     # LCA
                     lca_id = tree.get_lca(t_id, k_tid)
-                    lca_depth = len(tree.get_lineage(lca_id)) - 1
+                    lca_meta = node_lookup[lca_id]
                     
-                    distance = (target_depth - lca_depth) + (k_depth - lca_depth)
-                    rel_lca = lca_depth / max(target_depth - 1, 1)
-                    rel_k = k_depth / max(target_depth - 1, 1)
+                    distance = (t_meta['depth'] - lca_meta['depth']) + (k_meta['depth'] - lca_meta['depth'])
+                    rel_lca = lca_meta['depth'] / max(t_meta['depth'] - 1, 1)
                     
                     dist_data.append({
                         'distance': distance,
-                        'kmer_depth': k_depth,
+                        'kmer_depth': k_meta['depth'],
                         'relative_lca_depth': rel_lca,
                         'weight': count
                     })
