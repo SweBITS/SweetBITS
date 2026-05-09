@@ -75,17 +75,43 @@ def test_kmer_pipeline_full(tmp_path):
     assert "t_id" in df_features.columns
 
     # Human (9606) pooled totals:
-    # S1: 10 hits
-    # S2: 20 hits
-    # Total: 30 hits
+    # Lineage of 9606: [1 (root), 2759 (Eukaryota), 9606 (Homo sapiens)]
+    
+    # S1 (where t_id=9606): 
+    #   9606 hits: 10 (clade)
+    #   1 hits: 2 (lineage)
+    
+    # S2 (where t_id=9606): 
+    #   9606 hits: 20 (clade)
+    #   2 hits: 5 (misclassified - Bacteria is not in Eukaryota lineage)
+    
+    # Grand Totals Calculation for t_id 9606:
+    #   clade: 10 + 20 = 30
+    #   lineage: 2
+    #   misclassified: 5
+    #   classified: 30 + 2 + 5 = 37
     human_row = df_features.filter(pl.col("t_id") == 9606)
+    
     assert human_row["grand_clade_kmers"][0] == 30
+    assert human_row["grand_lineage_kmers"][0] == 2
+    assert human_row["grand_misclassified_kmers"][0] == 5
+    
+    # Check Ratios (30 / 37 = 0.81081)
+    assert human_row["grand_clade_to_classified_kmer_ratio"][0] == pytest.approx(0.81081, abs=1e-4)
+    # misclassified_to_classified: 5 / 37 = 0.13513...
+    assert human_row["grand_misclassified_to_classified_kmer_ratio"][0] == pytest.approx(0.13513, abs=1e-4)
+
+    # Check that misclassified distance stats were calculated
+    # Species 9606 has one misclassified hit (5000001). 
+    # Distance logic: (depth_9606 - depth_LCA) + (depth_5000001 - depth_LCA)
+    # This value should be non-null and positive.
+    assert human_row["mean_grand_misclassified_kmer_distance"][0] is not None
+    assert human_row["mean_grand_misclassified_kmer_distance"][0] > 0
 
     # Verify metadata
     meta = read_companion_metadata(feature_file)
     assert meta["file_type"] == "FEATURE_TABLE"
     assert meta["sorting"] == "t_id"
-
 
 def test_kmer_ingestion_generic(tmp_path):
     """
