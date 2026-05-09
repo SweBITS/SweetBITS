@@ -48,8 +48,8 @@ def calculate_weighted_stats(
     """
     # 1. Weighted Mean
     mean_lf = lf.group_by(group_col).agg(
-        (pl.col(metric_col) * pl.col(weight_col)).sum() / pl.col(weight_col).sum()
-    ).rename({metric_col: f"mean_{suffix}"})
+        ((pl.col(metric_col) * pl.col(weight_col)).sum() / pl.col(weight_col).sum()).alias(f"mean_{suffix}")
+    )
 
     # 2. Weighted Quantiles
     # Found by sorting and finding where the cumulative weight passes the threshold.
@@ -161,7 +161,7 @@ def produce_feature_kmer_global_logic(
             pl.col("kmer_count").filter(pl.col("is_in_clade")).sum().fill_null(0).alias("grand_clade_kmers"),
             pl.col("kmer_count").filter((~pl.col("is_in_clade")) & (pl.col("kmer_tax_id") > 0)).sum().fill_null(0).alias("grand_exclade_kmers"),
             pl.col("kmer_count").filter(pl.col("is_in_lineage") & (~pl.col("is_in_clade"))).sum().fill_null(0).alias("grand_lineage_kmers"),
-            pl.col("kmer_count").filter(pl.col("kmer_tax_id") == 1).sum().fill_null(0).alias("grand_root_kmers"),
+            pl.col("kmer_count").filter((pl.col("kmer_tax_id") == 1) & (~pl.col("is_in_clade"))).sum().fill_null(0).alias("grand_root_kmers"),
             pl.col("kmer_count").sum().alias("grand_total_kmers")
         ])
         .with_columns([
@@ -202,29 +202,27 @@ def produce_feature_kmer_global_logic(
     lca_ids = tree.get_lca_batch(root_ids, kmer_ids)
     lca_depths = tree.depths[tree._get_indices(lca_ids)]
     
+    # Just store the LCA data, don't re-join node_data here (already in dist_base_lf)
     pair_metrics_df = unique_pairs.with_columns([
         pl.Series("lca_depth", lca_depths.astype(np.uint8)),
         pl.Series("lca_id", lca_ids.astype(np.uint32))
-    ]).join(
-        node_data.rename({"t_id": "target_t_id", "depth": "root_depth"}).select(["target_t_id", "root_depth"]), 
-        left_on="t_id",
-        right_on="target_t_id"
-    ).join(
-        node_data.rename({"t_id": "k_tid", "depth": "k_depth"}).select(["k_tid", "k_depth"]),
-        left_on="kmer_tax_id",
-        right_on="k_tid"
-    ).with_columns([
-        ((pl.col("root_depth") - pl.col("lca_depth")) + (pl.col("k_depth") - pl.col("lca_depth"))).alias("distance"),
-        (pl.col("lca_depth") / (pl.col("root_depth") - 1)).alias("relative_lca_depth"),
-        (pl.col("k_depth") / (pl.col("root_depth") - 1)).alias("relative_k_depth")
     ])
 
-    dist_lf = dist_base_lf.join(pair_metrics_df.lazy(), on=["t_id", "kmer_tax_id"])
+    # Join the LCA data back, and calculate distances using the depths ALREADY in dist_base_lf
+    dist_lf = dist_base_lf.join(pair_metrics_df.lazy(), on=["t_id", "kmer_tax_id"]).with_columns([
+        ((pl.col("root_depth") - pl.col("lca_depth")) + (pl.col("kmer_depth") - pl.col("lca_depth"))).alias("distance"),
+        (pl.col("lca_depth") / (pl.col("root_depth") - 1)).alias("relative_lca_depth"),
+        (pl.col("kmer_depth") / (pl.col("root_depth") - 1)).alias("relative_k_depth")
+    ])
     
-    # Calculate weighted stats for the metrics
-    dist_stats = calculate_weighted_stats(dist_lf, "distance", "kmer_count", "t_id", "grand_misclassified_kmer_distance")
-    depth_stats = calculate_weighted_stats(dist_lf, "k_depth", "kmer_count", "t_id", "grand_misclassified_kmer_depth")
-    lca_stats = calculate_weighted_stats(dist_lf, "relative_lca_depth", "kmer_count", "t_id", "grand_misclassified_kmer_relative_lca_depth")
+    # NEW: Isolate strictly misclassified k-mers (exclude lineage hits) 
+    # to maintain parity with the original script's misclassified metrics.
+    misclassified_dist_lf = dist_lf.filter(~pl.col("is_in_lineage"))
+    
+    # Calculate weighted stats for the metrics using the strictly misclassified hits
+    dist_stats = calculate_weighted_stats(misclassified_dist_lf, "distance", "kmer_count", "t_id", "grand_misclassified_kmer_distance")
+    depth_stats = calculate_weighted_stats(misclassified_dist_lf, "kmer_depth", "kmer_count", "t_id", "grand_misclassified_kmer_depth")
+    lca_stats = calculate_weighted_stats(misclassified_dist_lf, "relative_lca_depth", "kmer_count", "t_id", "grand_misclassified_kmer_relative_lca_depth")
     
     # Lineage-only stats
     lineage_dist_lf = dist_lf.filter(pl.col("is_in_lineage"))
@@ -239,11 +237,11 @@ def produce_feature_kmer_global_logic(
         misclassified_pooled
         .group_by(["t_id", "kmer_tax_id"])
         .agg(pl.col("kmer_count").sum())
-        .sort("kmer_count", descending=True)
+        # FIX: perform sort inside the group context to guarantee accurate top 5
         .group_by("t_id")
         .agg([
-            pl.col("kmer_tax_id").head(5).alias("grand_top_5_misclassified_kmer_tax_ids"),
-            (pl.col("kmer_count").head(5) / pl.col("kmer_count").sum()).alias("grand_top_5_misclassified_kmer_shares")
+            pl.col("kmer_tax_id").sort_by("kmer_count", descending=True).head(5).alias("grand_top_5_misclassified_kmer_tax_ids"),
+            (pl.col("kmer_count").sort_by("kmer_count", descending=True).head(5) / pl.col("kmer_count").sum()).alias("grand_top_5_misclassified_kmer_shares")
         ])
     )
     
