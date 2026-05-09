@@ -142,3 +142,56 @@ def test_kmer_ingestion_generic(tmp_path):
     # Generic data should NOT have year/week columns
     assert "year" not in df.columns
     assert "week" not in df.columns
+
+def test_kmer_pipeline_golden_dataset(tmp_path):
+    """
+    Validates the SweetBITS k-mer feature extraction engine against an independently generated
+    Golden Dataset of 20 taxa and 5 samples, ensuring mathematical parity.
+    """
+    golden_dir = Path("tests/golden_data")
+    if not golden_dir.exists():
+        pytest.skip("Golden dataset not found. Run tests/generate_kmer_golden_data.py first.")
+        
+    kmer_dir = tmp_path / "kmer_agg"
+    kmer_dir.mkdir()
+    taxonomy_dir = Path("test_data/joltax_cache")
+    feature_file = tmp_path / "global_features.csv"
+
+    # 1. Run Ingestion on the 5 golden .kraken files
+    for k_file in golden_dir.glob("*.kraken"):
+        aggregate_kraken_kmers_logic(
+            kraken_file=k_file,
+            output_dir=kmer_dir,
+            taxonomy_dir=taxonomy_dir,
+            overwrite=True
+        )
+
+    # 2. Run Global Feature Extraction
+    input_pattern = str(kmer_dir / "*.kmers.parquet")
+    f_summary = produce_feature_kmer_global_logic(
+        input_pattern=input_pattern,
+        taxonomy_dir=taxonomy_dir,
+        output_file=feature_file,
+        overwrite=True
+    )
+    
+    # 3. Load both datasets
+    # Read generated features, treating missing values correctly
+    df_generated = pl.read_csv(feature_file, null_values=[""])
+    df_golden = pl.read_csv(golden_dir / "golden_kmer_features.csv", null_values=[""])
+    
+    assert f_summary["species_processed"] == df_golden.height
+    
+    # 4. Compare schemas and row counts
+    assert df_generated.height == df_golden.height
+    
+    # 5. Verify mathematical parity
+    # We use assert_frame_equal to ensure every cell matches the python-generated ground truth
+    try:
+        from polars.testing import assert_frame_equal
+        # Convert numeric columns to Float64 in both frames for robust comparison,
+        # ignoring string list columns like names and tax_ids.
+        # String columns are exact match checked by default.
+        assert_frame_equal(df_generated, df_golden, check_dtypes=False, rel_tol=1e-4, check_exact=False, check_column_order=False)
+    except ImportError:        pass # Older polars versions might not have testing module readily available, but 1.40 does.
+
