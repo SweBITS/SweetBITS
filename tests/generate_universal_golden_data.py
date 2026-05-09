@@ -148,10 +148,17 @@ def main():
         with open(input_dir / f"{sample['id']}.report", "w") as f:
             for node in sorted(report_clade.keys()):
                 m = node_lookup[node]
-                expected_uniq = int(min(report_clade[node] * 0.05, db_minimizers[node] * 0.9))
-                noise = (hash(sample['id']) + node) % 5
-                mm_uniq = max(1, expected_uniq + noise)
-                f.write(f"0.0\t{report_clade[node]}\t{counts.get(node, 0)}\t{mm_uniq*2}\t{mm_uniq}\t{m['rank']}\t{node}\t{m['name']}\n")
+                # NEW: Proportional Noise Model (+/- 2%)
+                # Ensures signal is not drowned out for small taxa (e.g. 20 reads)
+                base_ratio = 0.05
+                # Deterministic noise between 0.98 and 1.02 based on sample and node ID
+                noise_multiplier = 0.98 + (((hash(sample['id']) + node) % 40) / 1000.0) 
+                
+                expected_uniq = report_clade[node] * base_ratio * noise_multiplier
+                # Clamp to DB total and ensure at least 1
+                mm_uniq = max(1, int(min(expected_uniq, db_minimizers[node] * 0.9)))
+                mm_tot = int(mm_uniq * 2)
+                f.write(f"0.0\t{report_clade[node]}\t{counts.get(node, 0)}\t{mm_tot}\t{mm_uniq}\t{m['rank']}\t{node}\t{m['name']}\n")
 
     # 4. Generate Ground Truth Tables
     print("Phase 4: Generating ground truth tables...")

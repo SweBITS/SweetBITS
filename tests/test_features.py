@@ -62,11 +62,11 @@ def test_minimizer_correlations_golden_dataset(golden_data, tmp_path):
         assert col in df.columns
 
     # since the golden dataset uses a linear model for mm_uniq (0.05 * reads),
-    # but with randomized noise, we set a moderate threshold
+    # with high-precision proportional noise (+/- 2%), we set a strict threshold
     # Check a specific abundant species like Human (9606)
     human = df.filter(pl.col("t_id") == 9606).to_dicts()[0]
     assert human["mm_pearson_n"] == 10
-    assert human["mm_pearson_corr"] > 0.5
+    assert human["mm_pearson_corr"] > 0.9
     assert human["mm_pearson_p"] < 0.05
 
 def test_minimizer_correlations_bad_samples_golden(golden_data, tmp_path):
