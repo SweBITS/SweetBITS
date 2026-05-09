@@ -60,31 +60,32 @@ def test_kmer_pipeline_full(tmp_path):
     df_l1 = pl.read_parquet(sample1_lens)
     assert "t_id" in df_l1.columns
 
-    # # 4. Run Global Feature Extraction
-    # input_pattern = str(kmer_dir / "*.kmers.parquet")
-    # f_summary = produce_feature_kmer_global_logic(
-    #     input_pattern=input_pattern,
-    #     taxonomy_dir=taxonomy_dir,
-    #     output_file=feature_file,
-    #     overwrite=True
-    # )
-    # assert f_summary["species_processed"] == 2
+    # 4. Run Global Feature Extraction
+    input_pattern = str(kmer_dir / "*.kmers.parquet")
+    f_summary = produce_feature_kmer_global_logic(
+        input_pattern=input_pattern,
+        taxonomy_dir=taxonomy_dir,
+        output_file=feature_file,
+        overwrite=True
+    )
+    assert f_summary["species_processed"] == 2
 
-    # # 5. Verify Feature Extraction (Pooled Totals)
-    # df_features = pl.read_parquet(feature_file)
-    # assert "t_id" in df_features.columns
-    
-    # # Human (9606) pooled totals:
-    # # S1: 10 hits
-    # # S2: 20 hits
-    # # Total: 30 hits
-    # human_row = df_features.filter(pl.col("t_id") == 9606)
-    # assert human_row["grand_clade_kmers"][0] == 30
-    
-    # # Verify metadata
-    # meta = read_companion_metadata(feature_file)
-    # assert meta["file_type"] == "FEATURE_TABLE"
-    # assert meta["sorting"] == "t_id"
+    # 5. Verify Feature Extraction (Pooled Totals)
+    df_features = pl.read_parquet(feature_file)
+    assert "t_id" in df_features.columns
+
+    # Human (9606) pooled totals:
+    # S1: 10 hits
+    # S2: 20 hits
+    # Total: 30 hits
+    human_row = df_features.filter(pl.col("t_id") == 9606)
+    assert human_row["grand_clade_kmers"][0] == 30
+
+    # Verify metadata
+    meta = read_companion_metadata(feature_file)
+    assert meta["file_type"] == "FEATURE_TABLE"
+    assert meta["sorting"] == "t_id"
+
 
 def test_kmer_ingestion_generic(tmp_path):
     """

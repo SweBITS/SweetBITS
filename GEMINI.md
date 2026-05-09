@@ -168,7 +168,18 @@ Outputs abundance tables with `t_id` as the index and samples (YYYY_WW) as colum
   - `--overwrite`: Overwrite the output file if it exists.
   - `--dry-run`: If True, prints a comprehensive audit report of data retention (including Read Retention by Rank) and exits without saving.
 
-#### `produce reads`
+#### `produce feature kmer-global`
+Calculates globally aggregated k-mer classification quality features by pooling data across all samples.
+- **Inputs:** Glob pattern for `<KMER_AGG_PARQUET>` files.
+- **Arguments:**
+  - `INPUT_PATTERN`: Glob pattern (e.g., `results/*.kmers.parquet`).
+  - `--taxonomy DIR`: JolTax cache directory.
+  - `--output FILE`: Path to summary output file (.csv, .tsv, .parquet).
+  - `--cores INT`: Number of CPU cores to use.
+  - `--overwrite`: Overwrite output file if it exists.
+
+#### `produce feature uniq-minimizer-corr`
+
 Streams `<KRAKEN_PARQUET>` to extract reads into FASTQ format with high throughput and a constant memory profile.
 - **Inputs:** `<KRAKEN_PARQUET>` file or directory.
 - **Arguments:**
@@ -259,7 +270,7 @@ Instead of embedding metadata in the Parquet header, SweetBITS uses a Strict Mod
 7. [x] Implement Parquet version compatibility checking.
 8. [x] Implement `collect kraken classifications` (Ingestion from raw Kraken/FASTQ).
 9. [x] Implement `collect kraken kmers` (Aggregation for ML features).
-10. [ ] Implement `produce feature kmer-global` (Grand Global k-mer features).
+10. [x] Implement `produce feature kmer-global` (Grand Global k-mer features).
 11. [ ] Implement peak memory reporting for Windows (currently Unix-only).
 12. [ ] Future: `coda` command suite for Compositional Data Analysis.
 13. [x] **Bugfix:** Update `calculate_canonical_remainders` in `canonical.py` to not hardcode `global_root_idx = 0` and safeguard `parent_indices = tree.parents[active_canonical_subset]` against `-1` to prevent silent indexing bugs if the tree root changes.

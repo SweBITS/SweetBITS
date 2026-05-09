@@ -132,7 +132,7 @@ sweetbits produce feature uniq-minimizer-corr merged_reports.parquet \
 ```
 
 ### Grand Global K-mer Features (`kmer-global`)
-This is a two-step process: Ingestion followed by Global Feature Extraction. Currently, only the Ingestion step is implemented.
+Calculates globally aggregated k-mer features by pooling data from multiple samples. This is a two-step process: Ingestion followed by Feature Extraction.
 
 #### Step 1: Ingest K-mers
 ```bash
@@ -140,6 +140,14 @@ This is a two-step process: Ingestion followed by Global Feature Extraction. Cur
 sweetbits collect kraken kmers Ki-2022_01_001.kraken \
     --taxonomy /path/to/joltax_cache \
     --output-dir ./kmer_aggregation
+```
+
+#### Step 2: Extract Grand Global Features
+```bash
+# Pool all ingested samples to create global profiles
+sweetbits produce feature kmer-global "./kmer_aggregation/*.kmers.parquet" \
+    --taxonomy /path/to/joltax_cache \
+    --output grand_global_features.csv
 ```
 
 ### Full Validation Workflow
@@ -206,5 +214,22 @@ View the provenance and configuration of any SweetBITS generated file via its JS
 ```bash
 sweetbits inspect merged_reports.parquet
 sweetbits inspect abundance_table.csv.json
+
+## 7. Performance & Resource Planning
+
+Based on empirical benchmarks from the **Ljungbyhed dataset** (516 samples, ranging from 0.84 GB to 25.21 GB per compressed `.kraken2.gz` file), we have identified the following scaling patterns for the `collect kraken kmers` tool (using 4 cores):
+
+| Metric | Scaling Factor (per 1 GB decimal) | Typical Range |
+| :--- | :--- | :--- |
+| **Memory (RSS)** | **~4.8 GB** (+ 3.5 GB baseline) | 10–130 GB |
+| **Runtime** | **~3.5 minutes** | 15–90 minutes |
+
+### **Guideline Note**
+These numbers should be treated as **guidelines** rather than absolute limits. Resource usage is driven by more than just file size; it is also heavily influenced by:
+*   **Sample Complexity:** High taxonomic diversity (many unique species) increases memory pressure during k-mer aggregation.
+*   **Classification Rate:** Samples with a higher proportion of classified reads will require more processing time and memory than "empty" or poorly classified samples.
+*   **I/O Performance:** The speed of the underlying storage system can significantly impact runtime, especially when streaming large gzipped files.
+
+**Recommendation:** For stable execution, allocate at least **6 GB of RAM per 1 GB of compressed input**.
 ```
 

@@ -32,7 +32,8 @@ sweetbits
 │   ├── reads                  <- Extracts reads back to FASTQ
 │   ├── table                  <- Generates abundance matrices
 │   └── feature
-│       └── uniq-minimizer-corr <- Calculates validation metrics
+│       ├── uniq-minimizer-corr <- Calculates validation metrics
+│       └── kmer-global         <- Calculates pooled k-mer quality features
 │
 ├── annotate                   <- Amends tables with JolTax metadata
 └── inspect                    <- Prints Parquet metadata
@@ -54,6 +55,9 @@ SweetBITS provides several high-performance tools for processing Kraken 2 output
 - `collect kraken kmers`: Aggregates k-mer hit counts and read length distributions for species-level clades from raw Kraken read-by-read files.
     - *Purpose:* Transforms slow-to-parse text files into compact, sorted Parquet files optimized for machine learning feature extraction.
     - *Species Roll-up:* Automatically maps every read (including strains/subspecies) to its parent species-level clade using vectorized JolTax lookups.
+- `produce feature kmer-global`: Calculates globally aggregated k-mer classification quality features by pooling data across any number of samples.
+    - *Metrics:* Focuses on high-signal metrics like weighted mean taxonomic distance, LCA depth, and competitor identification.
+    - *Grand Totals:* Provides a "Grand Total" evidence profile for every species in the dataset, allowing for robust GBM-based true/false positive detection.
 - `produce feature uniq-minimizer-corr`: Calculates species-level and clade-level validation metrics based on unique minimizer coverage.
     - *Validation Strategy:* Correlates observed unique minimizer coverage against a probabilistic expectation model. Taxa that fail to correlate across samples (e.g., Pearson R < 0.7) are likely false positives.
     - *Safety Limits:* Automatically applies a floor of $n \ge 6$ samples to ensure statistical stability.
