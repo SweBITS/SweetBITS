@@ -119,6 +119,26 @@ Sorted by `year`, `week`, `sample_id`, and `t_id`. Compressed with `zstd`.
 | `mm_tot` | UInt64 | Total minimizer matches (includes duplicates) |
 | `mm_uniq` | UInt32 | Estimated distinct minimizer matches |
 
+### 3. `<KMER_AGG_PARQUET>`
+A summarized parquet file representing a single sample's k-mer hit counts per species-level clade.
+**Metadata:** Must include `file_type: KMER_AGG_PARQUET`.
+
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `t_id` | UInt32 | The assigned TaxID for the read |
+| `kmer_tax_id` | UInt32 | The TaxID of the k-mer hit |
+| `kmer_count` | UInt64 | Number of times this hit appeared in reads for this t_id |
+
+### 4. `<FEATURE_TABLE>`
+A table (CSV, TSV, or Parquet) containing quality features calculated for every taxon.
+**Metadata:** Must include `file_type: FEATURE_TABLE`.
+
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `t_id` | UInt32 | The taxonomic identifier |
+| `grand_*` | various | Statistical evidence ratios and counts |
+| `mean_*` | Float64 | Weighted distributional means |
+
 ---
 
 ## Toolkit Command Specifications
@@ -179,7 +199,18 @@ Calculates globally aggregated k-mer classification quality features by pooling 
   - `--overwrite`: Overwrite output file if it exists.
 
 #### `produce feature uniq-minimizer-corr`
+Validates taxonomic assignments by correlating observed unique minimizer coverage against a probabilistic model.
+- **Inputs:** `<REPORT_PARQUET>` (must be HYPERLOGLOG format).
+- **Arguments:**
+  - `INPUT_PARQUET`: Path to the merged reports Parquet.
+  - `--inspect FILE`: Kraken inspect CSV file providing database-level unique minimizer counts.
+  - `--taxonomy DIR`: JolTax cache directory.
+  - `--output FILE`: Path to summary output file (.csv, .tsv, .parquet).
+  - `--output-long FILE`: (Optional) Path to save per-sample feature metrics (.parquet).
+  - `--bad-samples FILE`: (Optional) List of sample IDs to exclude from correlation.
+  - `--overwrite`: Overwrite output file if it exists.
 
+#### `produce reads`
 Streams `<KRAKEN_PARQUET>` to extract reads into FASTQ format with high throughput and a constant memory profile.
 - **Inputs:** `<KRAKEN_PARQUET>` file or directory.
 - **Arguments:**
@@ -245,6 +276,7 @@ Instead of embedding metadata in the Parquet header, SweetBITS uses a Strict Mod
 - **Taxonomy:** Use `JolTax` (>=v0.3.0).
 - **Standard Libraries:** Use `pathlib` for paths, `logging` for output, `numpy` for vectorization.
 - **Performance:** Stream reads, chunk large operations, and utilize multiprocessing (`--cores` exposed in CLI) where reasonable. Fit within standard workstation RAM limits.
+  - *Note on Scaling:* Project-wide benchmarks identified a memory bottleneck (~1.5 TB) during global k-mer aggregation. A proposed optimization is to pre-calculate taxonomic labels (`is_in_clade`, etc.) during the ingestion phase and verify consistency via the JSON companion metadata.
 
 ### UX & Logging
 - **Standard Output Header:** Every command must log: Start time, Toolkit Version, CWD, and the exact Invocation Command.
@@ -271,6 +303,7 @@ Instead of embedding metadata in the Parquet header, SweetBITS uses a Strict Mod
 8. [x] Implement `collect kraken classifications` (Ingestion from raw Kraken/FASTQ).
 9. [x] Implement `collect kraken kmers` (Aggregation for ML features).
 10. [x] Implement `produce feature kmer-global` (Grand Global k-mer features).
-11. [ ] Implement peak memory reporting for Windows (currently Unix-only).
-12. [ ] Future: `coda` command suite for Compositional Data Analysis.
-13. [x] **Bugfix:** Update `calculate_canonical_remainders` in `canonical.py` to not hardcode `global_root_idx = 0` and safeguard `parent_indices = tree.parents[active_canonical_subset]` against `-1` to prevent silent indexing bugs if the tree root changes.
+11. [x] Implement `produce feature uniq-minimizer-corr` (Minimizer correlations).
+12. [ ] Implement peak memory reporting for Windows (currently Unix-only).
+13. [ ] Future: `coda` command suite for Compositional Data Analysis.
+14. [x] **Bugfix:** Update `calculate_canonical_remainders` in `canonical.py` to not hardcode `global_root_idx = 0` and safeguard `parent_indices = tree.parents[active_canonical_subset]` against `-1` to prevent silent indexing bugs if the tree root changes.
