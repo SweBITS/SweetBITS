@@ -131,8 +131,7 @@ def produce_feature_kmer_global_logic(
     # 2. Pool Data (Grand Totals)
     click.secho(f"Scanning and pooling k-mer data from '{input_pattern}'...", fg="cyan", err=True)
     
-    # We aggregate ALL k-mers for each (t_id, kmer_hit) pair across all samples
-    # We filter out 0 (unclassified) hits here as they are handled in grand_total
+    # We aggregate ALL k-mers for each (t_id, kmer_hit) pair across all samples.
     grand_lf = (
         pl.scan_parquet(input_pattern)
         .group_by(["t_id", "kmer_tax_id"])
@@ -319,9 +318,9 @@ def produce_feature_kmer_global_logic(
             pl.col("grand_top_5_exclade_kmer_shares").list.eval(pl.element().round(4).cast(pl.String)).list.join(";")
         ])
         if ext == ".tsv":
-            final_df.write_csv(output_file, separator="\t")
+            final_df.write_csv(output_file, separator="\t", quote_style="non_numeric")
         else:
-            final_df.write_csv(output_file)
+            final_df.write_csv(output_file, quote_style="non_numeric")
     else:
         final_df.write_parquet(output_file, compression="zstd")
 
@@ -578,9 +577,9 @@ def produce_feature_uniq_minimizer_corr_logic(
     if ext == ".parquet":
         summary_df.write_parquet(output_file, compression="zstd")
     elif ext == ".tsv":
-        summary_df.write_csv(output_file, separator="\t")
+        summary_df.write_csv(output_file, separator="\t", quote_style="non_numeric")
     else:
-        summary_df.write_csv(output_file)
+        summary_df.write_csv(output_file, quote_style="non_numeric")
 
     out_metadata = get_standard_metadata(
         file_type="FEATURE_TABLE",
