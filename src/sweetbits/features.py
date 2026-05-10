@@ -1,6 +1,12 @@
 """
 sweetbits.features
 Statistical and mathematical engines for metagenomic classification quality feature extraction.
+
+This module provides two primary feature extraction engines:
+1. Grand Global K-mer Features: Pools all k-mer classification data across samples to 
+   create a comprehensive evidence profile for every taxon.
+2. Unique Minimizer Correlations: Validates taxonomic presence by comparing observed 
+   minimizer coverage against a probabilistic expectation model.
 """
 
 import polars as pl
@@ -15,25 +21,26 @@ from sweetbits.taxmath import calc_clade_sum
 from sweetbits.utils import UNCLASSIFIED_TID, FILTERED_TID, load_sample_id_list, check_write_permission
 from sweetbits.metadata import validate_sweetbits_file, get_standard_metadata, save_companion_metadata
 
-# Hardcoded Correlation Parameters
-CORR_TOP_PERCENT_FILTER = 1.0  # Remove top 1% of samples by coverage for the filtered correlation
-CORR_TOP_FILTER_MINIMUM = 3    # Remove at least 3 samples for the filtered correlation
-MIN_OBSERVATIONS_FOR_CORR = 6  # Minimum samples required for a valid correlation
+# Parameters for the Minimizer Correlation engine
+CORR_TOP_PERCENT_FILTER = 1.0  # Percentage of top coverage samples to remove for filtered correlation
+CORR_TOP_FILTER_MINIMUM = 3    # Minimum number of samples to remove for filtered correlation
+MIN_OBSERVATIONS_FOR_CORR = 6  # Minimum sample size (n) required to calculate a Pearson correlation
 
 def calculate_p_value(t_stat: float, n: int) -> Optional[float]:
     """
-    Calculates the two-tailed p-value for a given t-statistic and sample size.
+    Calculates the two-tailed p-value for a Pearson correlation.
+
+    Uses the survival function (1 - CDF) of the t-distribution with n-2 degrees of freedom.
 
     Args:
-        t_stat : The t-statistic from the Pearson correlation.
-        n      : The number of samples used in the correlation.
+        t_stat : The t-statistic derived from the correlation coefficient and sample size.
+        n      : The number of observations (samples).
 
     Returns:
-        The p-value, or None if the input is invalid (n < 3 or t_stat is NaN).
+        The p-value as a float, or None if calculation is not statistically valid (n < 3).
     """
     if t_stat is None or np.isnan(t_stat) or n < 3:
         return None
-    # 2 * survival function (1 - cdf) of the t-distribution
     return 2 * t.sf(abs(t_stat), df=n - 2)
 
 def calculate_weighted_stats(
@@ -44,16 +51,31 @@ def calculate_weighted_stats(
     suffix: str
 ) -> pl.LazyFrame:
     """
-    Calculates weighted Mean, Median, CV, P05, and P95 for a metric.
+    Calculates a suite of weighted distributional statistics for a given metric.
+
+    This function computes the weighted Mean, Median, CV, 5th percentile, and 95th percentile.
+    Weighting ensures that k-mer hits with higher counts have a proportional influence
+    on the taxonomic distance and depth summaries.
+
+    Args:
+        lf         : LazyFrame containing the raw observations and weights.
+        metric_col : The column to calculate statistics for (e.g., 'distance').
+        weight_col : The column providing the weights (e.g., 'kmer_count').
+        group_col  : The taxonomic key to group by (typically 't_id').
+        suffix     : String suffix to append to the output column names.
+
+    Returns:
+        A LazyFrame with one row per group_col and the calculated statistical columns.
     """
     # 1. Weighted Mean
-    # FIXED: Use .alias() directly on the expression
+    # Calculated as sum(value * weight) / sum(weight)
     mean_lf = lf.group_by(group_col).agg(
         ((pl.col(metric_col) * pl.col(weight_col)).sum() / pl.col(weight_col).sum()).alias(f"mean_{suffix}")
     )
 
     # 2. Weighted Quantiles
-    # Found by sorting and finding where the cumulative weight passes the threshold.
+    # Determined by sorting the observations and identifying the values where the 
+    # cumulative weight crosses the 5%, 50% (median), and 95% thresholds.
     quantiles_lf = (
         lf.sort(metric_col)
         .group_by(group_col)
@@ -70,8 +92,8 @@ def calculate_weighted_stats(
         ])
     )
 
-    # 3. Weighted Standard Deviation & CV
-    # Formula: sqrt( sum(w_i * (x_i - mean)^2) / (sum(w_i) - 1) )
+    # 3. Weighted Standard Deviation & Coefficient of Variation (CV)
+    # Variance formula: sum(w_i * (x_i - mean)^2) / (sum(w_i) - 1)
     stdev_cv_lf = (
         lf.join(mean_lf, on=group_col)
         .group_by(group_col)
@@ -105,7 +127,27 @@ def produce_feature_kmer_global_logic(
     overwrite: bool = False
 ) -> Dict[str, Any]:
     """
-    Orchestrates the Grand Global k-mer feature generation.
+    Orchestrates the Grand Global k-mer feature generation engine.
+
+    This engine operates in four distinct phases:
+    1. Labeling: Every k-mer hit is categorized as 'Clade', 'Lineage', or 'Misclassified' 
+       using a Nested Set Model for O(1) taxonomic checks.
+    2. Aggregation: 14 distinct ratios and confidence scores are calculated for 
+       every species rank taxon.
+    3. Distributional Analysis: Weighted distances and depths are calculated to 
+       quantify the "biological closeness" of off-target noise.
+    4. Competition Profiling: Top 5 taxonomic competitors are identified for 
+       each species based on misclassification volume.
+
+    Args:
+        input_pattern : Glob pattern for the ingested .kmers.parquet files.
+        taxonomy_dir  : Path to the JolTax cache directory.
+        output_file   : Path to save the resulting feature table (CSV, TSV, or Parquet).
+        cores         : Number of threads to dedicate to Polars.
+        overwrite     : Whether to overwrite an existing output file.
+
+    Returns:
+        A dictionary containing processing statistics.
     """
     if output_file.exists() and not overwrite:
         raise FileExistsError(f"Output file '{output_file}' already exists. Use --overwrite to replace.")
@@ -119,8 +161,9 @@ def produce_feature_kmer_global_logic(
     click.secho(f"Loading JolTax taxonomy from {taxonomy_dir.name}...", fg="cyan", err=True)
     tree = JolTree.load(taxonomy_dir)
     
-    # Pre-build depth and ancestor lookup data (using JolTree primitives)
-    # entry/exit times allow O(1) ancestor/clade checks
+    # Pre-build a lightweight taxonomic reference table.
+    # The 'entry' and 'exit' times allow us to determine if one node is a descendant
+    # of another without traversing the tree, enabling high-speed vectorized labeling.
     node_data = pl.DataFrame({
         "t_id": tree._index_to_id.astype(np.uint32),
         "depth": tree.depths.astype(np.uint8),
@@ -129,9 +172,10 @@ def produce_feature_kmer_global_logic(
     })
 
     # 2. Pool Data (Grand Totals)
+    # Scans all sample summaries and groups by (target_taxon, kmer_hit).
+    # TaxID 0 is explicitly kept here to support grand total and unclassified ratio math.
     click.secho(f"Scanning and pooling k-mer data from '{input_pattern}'...", fg="cyan", err=True)
     
-    # We aggregate ALL k-mers for each (t_id, kmer_hit) pair across all samples.
     grand_lf = (
         pl.scan_parquet(input_pattern)
         .group_by(["t_id", "kmer_tax_id"])
@@ -139,11 +183,12 @@ def produce_feature_kmer_global_logic(
     )
 
     # 3. Label Hits (Clade vs Lineage vs Misclassified)
-    click.secho("Phase 1/4: Labeling k-mer hits (clade vs lineage)...", fg="cyan", err=True)
+    # Phase 1/4: Identifies the relationship between the Kraken assignment and the k-mer evidence.
+    click.secho("Phase 1/4: Labeling all k-mer hits (clade vs lineage vs misclassified)...", fg="cyan", err=True)
     
-    # Join with node data for both the target t_id and the k-mer hit
-    # FIX: Eagerly collect this trunk into memory here. This stops Polars from
-    # re-evaluating the Parquet scan 5 separate times downstream.
+    # Materialize the calculation 'trunk' into memory here. 
+    # This summarized table is small enough to fit in RAM but ensures that the 
+    # massive project-wide Parquet scan happens exactly once.
     labeled_eager_df = (
         grand_lf
         .join(node_data.lazy().rename({"t_id": "target_t_id", "depth": "root_depth", "entry": "root_entry", "exit": "root_exit"}), left_on="t_id", right_on="target_t_id", how="left")
@@ -156,11 +201,12 @@ def produce_feature_kmer_global_logic(
         ])
     ).collect()
     
-    # Convert back to lazy. From this point forward, the DAG's source is RAM, not the disk.
+    # All subsequent operations branch from this in-memory summarized source.
     labeled_lf = labeled_eager_df.lazy()
 
     # 4. Calculate Core Counts & Ratios
-    click.secho("Phase 2/4: Calculating grand totals and ratios...", fg="cyan", err=True)
+    # Phase 2/4: Calculates absolute counts and high-signal quality ratios.
+    click.secho("Phase 2/4: Calculating grand k-mer totals and ratios...", fg="cyan", err=True)
     
     counts_lf = (
         labeled_lf
@@ -200,20 +246,18 @@ def produce_feature_kmer_global_logic(
     )
 
     # 5. Calculate Weighted Distance/Depth Stats
-    click.secho("Phase 3/4: Analyzing taxonomic distance and distribution...", fg="cyan", err=True)
+    # Phase 3/4: Measures the "taxonomic distance" of k-mer noise from the target species.
+    click.secho("Phase 3/4: Analyzing taxonomic distance and distribution of out-of-clade k-mers...", fg="cyan", err=True)
     
-    # To calculate distance and LCA depth, we need to join lineages (expensive)
-    # BUT we only do this for the unique hits in the pooled data
+    # Distance = (target_depth - LCA_depth) + (hit_depth - LCA_depth)
+    # Relative LCA Depth = LCA_depth / (target_depth - 1)
+    
     dist_base_lf = (
         labeled_lf
         .filter((~pl.col("is_in_clade")) & (pl.col("kmer_tax_id") > 0))
     )
     
-    # Vectorized LCA Depth calculation using tree indices
-    # Distance = (depth_A - depth_LCA) + (depth_B - depth_LCA)
-    # Relative LCA Depth = depth_LCA / (depth_root - 1)
-    
-    # We'll calculate these in memory for the unique pairs (usually a small number)
+    # LCA calculations are computationally intensive, so we compute them once for unique (target, hit) pairs.
     unique_pairs = dist_base_lf.select(["t_id", "kmer_tax_id"]).unique().collect()
     
     root_ids = unique_pairs["t_id"].to_numpy()
@@ -222,38 +266,38 @@ def produce_feature_kmer_global_logic(
     lca_ids = tree.get_lca_batch(root_ids, kmer_ids)
     lca_depths = tree.depths[tree._get_indices(lca_ids)]
     
-    # Just store the LCA data, don't re-join node_data here (already in dist_base_lf)
     pair_metrics_df = unique_pairs.with_columns([
         pl.Series("lca_depth", lca_depths.astype(np.uint8)),
         pl.Series("lca_id", lca_ids.astype(np.uint32))
     ])
 
-    # Join the LCA data back, and calculate distances using the depths ALREADY in dist_base_lf
+    # Final distance and relative metrics. Denominators are cast to Int32 to prevent UInt8 underflow.
     dist_lf = dist_base_lf.join(pair_metrics_df.lazy(), on=["t_id", "kmer_tax_id"]).with_columns([
         ((pl.col("root_depth") - pl.col("lca_depth")) + (pl.col("kmer_depth") - pl.col("lca_depth"))).alias("distance"),
         (pl.col("lca_depth") / (pl.col("root_depth").cast(pl.Int32) - 1)).alias("relative_lca_depth"),
         (pl.col("kmer_depth") / (pl.col("root_depth").cast(pl.Int32) - 1)).alias("relative_k_depth")
     ])
     
-    # NEW: Isolate strictly misclassified k-mers (exclude lineage hits) 
-    # to maintain parity with the original script's misclassified metrics.
+    # Isolate strictly misclassified k-mers (hits outside the species lineage)
     misclassified_dist_lf = dist_lf.filter(~pl.col("is_in_lineage"))
     
-    # Calculate weighted stats for the metrics using the strictly misclassified hits
+    # Weighted statistics quantify the 'noise profile' for each species.
     dist_stats = calculate_weighted_stats(misclassified_dist_lf, "distance", "kmer_count", "t_id", "grand_misclassified_kmer_distance")
     depth_stats = calculate_weighted_stats(misclassified_dist_lf, "kmer_depth", "kmer_count", "t_id", "grand_misclassified_kmer_depth")
     lca_stats = calculate_weighted_stats(misclassified_dist_lf, "relative_lca_depth", "kmer_count", "t_id", "grand_misclassified_kmer_relative_lca_depth")
     
-    # Lineage-only stats
+    # Lineage-only statistics (hits between assigned species and root)
     lineage_dist_lf = dist_lf.filter(pl.col("is_in_lineage"))
     lineage_stats = calculate_weighted_stats(lineage_dist_lf, "relative_k_depth", "kmer_count", "t_id", "grand_lineage_kmer_relative_depth")
 
     # 6. Top Hits
-    click.secho("Phase 4/4: Identifying top taxonomic competitors...", fg="cyan", err=True)
+    # Phase 4/4: Profiles the primary taxonomic competitors for each identification.
+    click.secho("Phase 4/4: Identifying top taxa for out-of-clade k-mer hits...", fg="cyan", err=True)
     
     exclade_pooled = dist_lf.collect()
     misclassified_pooled = exclade_pooled.filter(~pl.col("is_in_lineage"))
     
+    # Top hits are sorted by count (Descending) and TaxID (Ascending) for deterministic tie-breaking.
     top_hits = (
         misclassified_pooled
         .group_by("t_id")
@@ -270,9 +314,8 @@ def produce_feature_kmer_global_logic(
         ]), on="t_id", how="full", coalesce=True
     )
     
-    # Map names for top hits in bulk
+    # Resolve scientific names for the competitor TaxIDs in a single batch operation.
     all_top_ids = top_hits["grand_top_5_misclassified_kmer_tax_ids"].explode().drop_nulls().unique().to_list()
-    # Add exclade ids too
     exclade_ids = top_hits["grand_top_5_exclade_kmer_tax_ids"].explode().drop_nulls().unique().to_list()
     all_top_ids = list(set(all_top_ids + exclade_ids))
     
@@ -306,7 +349,8 @@ def produce_feature_kmer_global_logic(
         .sort("t_id")
     )
 
-    # Flatten top hit lists to strings for CSV/TSV
+    # Convert list columns to character-delimited strings.
+    # Non-numeric columns are explicitly quoted for parsing safety in downstream tools.
     ext = output_file.suffix.lower()
     if ext != ".parquet":
         final_df = final_df.with_columns([
@@ -351,6 +395,14 @@ def generate_minimizer_correlations(
     minimizer coverage against an expected probabilistic model based on 
     sequencing depth.
 
+    Algorithm:
+    1. Observed Coverage (O): (Observed Unique Minimizers) / (DB Unique Minimizers)
+    2. Expected Coverage (E): 1 - (1 - 1/M)^R, where M is normalized DB minimizers 
+       and R is the number of reads assigned to the clade.
+
+    A high correlation between O and E across samples indicates that the 
+    evidence for the taxon is accumulating in a biologically plausible manner.
+
     Args:
         df               : LazyFrame of merged reports (must have mm_tot, mm_uniq).
         inspect_df       : LazyFrame of Kraken inspect data (tax_id, clade_minimizers).
@@ -370,15 +422,14 @@ def generate_minimizer_correlations(
         df = df.filter(~pl.col("sample_id").is_in(bad_samples))
 
     # 2. Clade Aggregation
-    # We must ensure we have clade-level read counts to match the clade-level minimizers.
+    # Minimizer metrics are typically reported for clades, so read counts must 
+    # be rolled up to the clade level before modeling.
     click.secho("Calculating cumulative clade counts...", fg="cyan", err=True)
     
-    # Standardize sample_id to Categorical for consistent joining
     df = df.with_columns(pl.col("sample_id").cast(pl.Categorical))
     
     df_reads = calc_clade_sum(df.collect(), tree, min_reads=0, min_observed=0)
     
-    # Re-join with original minimizer counts from the reports
     df_joined = (
         df_reads.lazy()
         .join(
@@ -397,8 +448,6 @@ def generate_minimizer_correlations(
     )
 
     # 3. Probabilistic Coverage Modeling
-    # Algorithm: Observed Coverage (O) vs Expected Coverage (E).
-    # E = 1 - (1 - 1/M)^R, where M is DB minimizers and R is reads.
     click.secho("Calculating expected unique minimizer coverage...", fg="cyan", err=True)
     
     feature_lf = (
@@ -422,6 +471,8 @@ def generate_minimizer_correlations(
     )
 
     # 4. Statistical Aggregation
+    # Phase 1: Simple Pearson Correlation.
+    # Phase 2: Filtered Correlation (Outlier rejection) to handle anomalous depth spikes.
     click.secho("Calculating Pearson correlations and distributional stats...", fg="cyan", err=True)
 
     x = pl.col("mm_obs_cov")
@@ -523,7 +574,10 @@ def produce_feature_uniq_minimizer_corr_logic(
     overwrite: bool = False
 ) -> Dict[str, Any]:
     """
-    Orchestrates the minimizer correlation feature generation process.
+    Orchestrates the unique minimizer correlation feature generation logic.
+
+    This high-level function handles environment setup, metadata validation, 
+    taxonomy loading, and CSV/Parquet output generation.
     """
     if output_file.exists() and not overwrite:
         raise FileExistsError(f"Output file '{output_file}' already exists. Use --overwrite to replace it.")
