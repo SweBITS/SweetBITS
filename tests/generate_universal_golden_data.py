@@ -165,7 +165,6 @@ def main():
             'kmers_global_lineageVSclassified_ratio': c['kmers_global_lineage_count'] / d_class, 
             'kmers_global_misclassifiedVSclassified_ratio': c['kmers_global_misclassified_count'] / d_class, 
             'kmers_global_rootVSclassified_ratio': c['kmers_global_root_count'] / d_class, 
-            'kmers_global_supportingVSmisclassified_ratio': (c['kmers_global_clade_count'] + c['kmers_global_lineage_count']) / d_misc if c['kmers_global_misclassified_count'] > 0 else 1.0,
             
             'kmers_global_cladeVStotal_ratio': c['kmers_global_clade_count'] / d_tot, 
             'kmers_global_classifiedVStotal_ratio': c['kmers_global_classified_count'] / d_tot, 

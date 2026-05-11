@@ -214,6 +214,9 @@ def produce_feature_kmer_global_logic(
     # Phase 2/4: Calculates absolute counts and high-signal quality ratios.
     click.secho("Phase 2/4: Calculating global k-mer totals and ratios...", fg="cyan", err=True)
     
+    def safe_div(num_expr, den_expr):
+        return pl.when(den_expr > 0).then(num_expr / den_expr).otherwise(None)
+
     counts_lf = (
         labeled_lf
         .group_by("t_id")
@@ -232,22 +235,21 @@ def produce_feature_kmer_global_logic(
             (pl.col("kmers_global_total_count") - pl.col("kmers_global_classified_count")).alias("kmers_global_unclassified_count")
         ])
         .with_columns([
-            (pl.col("kmers_global_clade_count") / pl.col("kmers_global_classified_count")).alias("kmers_global_cladeVSclassified_ratio"),
-            (pl.col("kmers_global_lineage_count") / pl.col("kmers_global_classified_count")).alias("kmers_global_lineageVSclassified_ratio"),
-            (pl.col("kmers_global_misclassified_count") / pl.col("kmers_global_classified_count")).alias("kmers_global_misclassifiedVSclassified_ratio"),
-            (pl.col("kmers_global_root_count") / pl.col("kmers_global_classified_count")).alias("kmers_global_rootVSclassified_ratio"),
-            (pl.when(pl.col("kmers_global_misclassified_count") > 0)
-             .then((pl.col("kmers_global_clade_count") + pl.col("kmers_global_lineage_count")) / pl.col("kmers_global_misclassified_count"))
-             .otherwise(1.0)).alias("kmers_global_supportingVSmisclassified_ratio"),
-            (pl.col("kmers_global_clade_count") / pl.col("kmers_global_total_count")).alias("kmers_global_cladeVStotal_ratio"),
-            (pl.col("kmers_global_classified_count") / pl.col("kmers_global_total_count")).alias("kmers_global_classifiedVStotal_ratio"),
-            (pl.col("kmers_global_lineage_count") / pl.col("kmers_global_total_count")).alias("kmers_global_lineageVStotal_ratio"),
-            (pl.col("kmers_global_root_count") / pl.col("kmers_global_total_count")).alias("kmers_global_rootVStotal_ratio"),
-            (pl.col("kmers_global_misclassified_count") / pl.col("kmers_global_total_count")).alias("kmers_global_misclassifiedVStotal_ratio"),
-            (pl.col("kmers_global_root_count") / pl.col("kmers_global_exclade_count")).alias("kmers_global_rootVSexclade_ratio"),
-            (pl.col("kmers_global_lineage_count") / pl.col("kmers_global_exclade_count")).alias("kmers_global_lineageVSexclade_ratio"),
-            (pl.col("kmers_global_exclade_count") / pl.col("kmers_global_total_count")).alias("kmers_global_excladeVStotal_ratio"),
-            ((pl.col("kmers_global_clade_count") + pl.col("kmers_global_lineage_count")) / pl.col("kmers_global_total_count")).alias("kmers_global_supportingVStotal_ratio")
+            safe_div(pl.col("kmers_global_clade_count"), pl.col("kmers_global_classified_count")).alias("kmers_global_cladeVSclassified_ratio"),
+            safe_div(pl.col("kmers_global_lineage_count"), pl.col("kmers_global_classified_count")).alias("kmers_global_lineageVSclassified_ratio"),
+            safe_div(pl.col("kmers_global_misclassified_count"), pl.col("kmers_global_classified_count")).alias("kmers_global_misclassifiedVSclassified_ratio"),
+            safe_div(pl.col("kmers_global_root_count"), pl.col("kmers_global_classified_count")).alias("kmers_global_rootVSclassified_ratio"),
+            
+            safe_div(pl.col("kmers_global_clade_count"), pl.col("kmers_global_total_count")).alias("kmers_global_cladeVStotal_ratio"),
+            safe_div(pl.col("kmers_global_classified_count"), pl.col("kmers_global_total_count")).alias("kmers_global_classifiedVStotal_ratio"),
+            safe_div(pl.col("kmers_global_lineage_count"), pl.col("kmers_global_total_count")).alias("kmers_global_lineageVStotal_ratio"),
+            safe_div(pl.col("kmers_global_root_count"), pl.col("kmers_global_total_count")).alias("kmers_global_rootVStotal_ratio"),
+            safe_div(pl.col("kmers_global_misclassified_count"), pl.col("kmers_global_total_count")).alias("kmers_global_misclassifiedVStotal_ratio"),
+            safe_div(pl.col("kmers_global_exclade_count"), pl.col("kmers_global_total_count")).alias("kmers_global_excladeVStotal_ratio"),
+            safe_div((pl.col("kmers_global_clade_count") + pl.col("kmers_global_lineage_count")), pl.col("kmers_global_total_count")).alias("kmers_global_supportingVStotal_ratio"),
+            
+            safe_div(pl.col("kmers_global_root_count"), pl.col("kmers_global_exclade_count")).alias("kmers_global_rootVSexclade_ratio"),
+            safe_div(pl.col("kmers_global_lineage_count"), pl.col("kmers_global_exclade_count")).alias("kmers_global_lineageVSexclade_ratio"),
         ])
     )
 
@@ -839,5 +841,412 @@ def produce_feature_read_lengths_sample_logic(
 
     return {
         "records_processed": df.height,
+        "output_file": str(output_file)
+    }
+import polars as pl
+import numpy as np
+import click
+import os
+from pathlib import Path
+from typing import Dict, Any, Optional
+from joltax import JolTree
+from sweetbits.utils import check_write_permission
+from sweetbits.metadata import get_standard_metadata, save_companion_metadata, read_companion_metadata
+
+def calculate_weighted_stats(
+    lf: pl.LazyFrame, 
+    metric_col: str, 
+    weight_col: str, 
+    group_col: Any,
+    suffix: str
+) -> pl.LazyFrame:
+    """
+    Calculates a suite of weighted distributional statistics for a given metric.
+    (This is identical to the one in features.py, just redefined here for simplicity if needed,
+     but we'll import it from features in the final merge).
+    """
+    mean_lf = lf.group_by(group_col).agg(
+        ((pl.col(metric_col).cast(pl.Float64) * pl.col(weight_col)).sum() / pl.col(weight_col).sum()).alias(f"{suffix}_mean")
+    )
+
+    quantiles_lf = (
+        lf.sort(metric_col)
+        .group_by(group_col)
+        .agg([
+            pl.col(metric_col).gather(
+                pl.col(weight_col).cum_sum().search_sorted(pl.col(weight_col).sum() * 0.05)
+            ).first().alias(f"{suffix}_p05"),
+            pl.col(metric_col).gather(
+                pl.col(weight_col).cum_sum().search_sorted(pl.col(weight_col).sum() * 0.50)
+            ).first().alias(f"{suffix}_median"),
+            pl.col(metric_col).gather(
+                pl.col(weight_col).cum_sum().search_sorted(pl.col(weight_col).sum() * 0.95)
+            ).first().alias(f"{suffix}_p95")
+        ])
+    )
+
+    stdev_cv_lf = (
+        lf.join(mean_lf, on=group_col)
+        .group_by(group_col)
+        .agg([
+            (
+                pl.when(pl.col(weight_col).sum() > 1)
+                .then(
+                    ((pl.col(weight_col) * (pl.col(metric_col) - pl.col(f"{suffix}_mean")).pow(2)).sum() /
+                    (pl.col(weight_col).sum() - 1)).sqrt()
+                )
+                .otherwise(None)
+            ).alias("stdev"),
+            pl.col(f"{suffix}_mean").first().alias("mean")
+        ])
+        .with_columns(
+            pl.when(pl.col("mean") != 0)
+            .then(pl.col("stdev") / pl.col("mean"))
+            .otherwise(None)
+            .alias(f"{suffix}_cv")
+        )
+        .drop(["stdev", "mean"])
+    )
+
+    return mean_lf.join(quantiles_lf, on=group_col).join(stdev_cv_lf, on=group_col)
+
+def produce_feature_kmer_sample_logic(
+    input_pattern: str,
+    taxonomy_dir: Path,
+    output_file: Path,
+    cores: Optional[int] = None,
+    overwrite: bool = False
+) -> Dict[str, Any]:
+    """
+    Orchestrates the Per-Sample k-mer feature generation engine.
+
+    This engine operates in four phases (mirroring the global engine):
+    1. Labeling: K-mers are categorized as 'Clade', 'Lineage', or 'Misclassified'.
+    2. Aggregation: 13 distinct ratios and confidence scores are calculated per species PER SAMPLE.
+    3. Distributional Analysis: Weighted distances and depths are calculated.
+    4. Competition Profiling: Top 3 taxonomic competitors are identified per sample.
+
+    Args:
+        input_pattern : Glob pattern for the ingested .kmers.parquet files.
+        taxonomy_dir  : Path to the JolTax cache directory.
+        output_file   : Path to save the resulting long-format Parquet file.
+        cores         : Number of threads to dedicate to Polars.
+        overwrite     : Whether to overwrite an existing output file.
+
+    Returns:
+        A dictionary containing processing statistics.
+    """
+    if output_file.exists() and not overwrite:
+        raise FileExistsError(f"Output file '{output_file}' already exists. Use --overwrite to replace.")
+
+    check_write_permission(output_file)
+
+    if cores:
+        os.environ["POLARS_MAX_THREADS"] = str(cores)
+
+    # 1. Load Taxonomy
+    click.secho(f"Loading JolTax taxonomy from {taxonomy_dir.name}...", fg="cyan", err=True)
+    tree = JolTree.load(taxonomy_dir)
+    
+    node_data = pl.DataFrame({
+        "t_id": tree._index_to_id.astype(np.uint32),
+        "depth": tree.depths.astype(np.uint8),
+        "entry": tree.entry_times,
+        "exit": tree.exit_times
+    })
+
+    # 2. Pool Data (Sample Resolution)
+    click.secho(f"Scanning k-mer data from '{input_pattern}'...", fg="cyan", err=True)
+    
+    # We maintain sample_id grouping
+    base_lf = pl.scan_parquet(input_pattern)
+
+    # 3. Label Hits
+    click.secho("Phase 1/4: Labeling k-mer hits per sample...", fg="cyan", err=True)
+    
+    labeled_eager_df = (
+        base_lf
+        .join(node_data.lazy().rename({"t_id": "target_t_id", "depth": "root_depth", "entry": "root_entry", "exit": "root_exit"}), left_on="t_id", right_on="target_t_id", how="left")
+        .join(node_data.lazy().rename({"t_id": "kmer_tax_id", "depth": "kmer_depth", "entry": "kmer_entry", "exit": "kmer_exit"}), on="kmer_tax_id", how="left")
+        .with_columns([
+            ((pl.col("kmer_entry") >= pl.col("root_entry")) & (pl.col("kmer_exit") <= pl.col("root_exit"))).fill_null(False).alias("is_in_clade"),
+            ((pl.col("root_entry") >= pl.col("kmer_entry")) & (pl.col("root_exit") <= pl.col("kmer_exit"))).fill_null(False).alias("is_in_lineage")
+        ])
+    ).collect()
+    
+    labeled_lf = labeled_eager_df.lazy()
+
+    # 4. Calculate Core Counts & Ratios
+    click.secho("Phase 2/4: Calculating per-sample k-mer totals and ratios...", fg="cyan", err=True)
+    
+    # We define a helper for safe division (yields Null if denominator is 0)
+    def safe_div(num_expr, den_expr):
+        return pl.when(den_expr > 0).then(num_expr / den_expr).otherwise(None)
+
+    counts_lf = (
+        labeled_lf
+        .group_by(["sample_id", "t_id"])
+        .agg([
+            pl.col("kmer_count").filter(pl.col("is_in_clade")).sum().fill_null(0).alias("kmers_sample_clade_count"),
+            pl.col("kmer_count").filter((~pl.col("is_in_clade")) & (pl.col("kmer_tax_id") > 0)).sum().fill_null(0).alias("kmers_sample_exclade_count"),
+            pl.col("kmer_count").filter(pl.col("is_in_lineage") & (~pl.col("is_in_clade"))).sum().fill_null(0).alias("kmers_sample_lineage_count"),
+            pl.col("kmer_count").filter((pl.col("kmer_tax_id") == 1) & (~pl.col("is_in_clade"))).sum().fill_null(0).alias("kmers_sample_root_count"),
+            pl.col("kmer_count").sum().alias("kmers_sample_total_count")
+        ])
+        .with_columns([
+            (pl.col("kmers_sample_clade_count") + pl.col("kmers_sample_exclade_count")).alias("kmers_sample_classified_count"),
+            (pl.col("kmers_sample_exclade_count") - pl.col("kmers_sample_lineage_count")).alias("kmers_sample_misclassified_count")
+        ])
+        .with_columns([
+            (pl.col("kmers_sample_total_count") - pl.col("kmers_sample_classified_count")).alias("kmers_sample_unclassified_count")
+        ])
+        .with_columns([
+            safe_div(pl.col("kmers_sample_clade_count"), pl.col("kmers_sample_classified_count")).alias("kmers_sample_cladeVSclassified_ratio"),
+            safe_div(pl.col("kmers_sample_lineage_count"), pl.col("kmers_sample_classified_count")).alias("kmers_sample_lineageVSclassified_ratio"),
+            safe_div(pl.col("kmers_sample_misclassified_count"), pl.col("kmers_sample_classified_count")).alias("kmers_sample_misclassifiedVSclassified_ratio"),
+            safe_div(pl.col("kmers_sample_root_count"), pl.col("kmers_sample_classified_count")).alias("kmers_sample_rootVSclassified_ratio"),
+            
+            safe_div(pl.col("kmers_sample_clade_count"), pl.col("kmers_sample_total_count")).alias("kmers_sample_cladeVStotal_ratio"),
+            safe_div(pl.col("kmers_sample_classified_count"), pl.col("kmers_sample_total_count")).alias("kmers_sample_classifiedVStotal_ratio"),
+            safe_div(pl.col("kmers_sample_lineage_count"), pl.col("kmers_sample_total_count")).alias("kmers_sample_lineageVStotal_ratio"),
+            safe_div(pl.col("kmers_sample_root_count"), pl.col("kmers_sample_total_count")).alias("kmers_sample_rootVStotal_ratio"),
+            safe_div(pl.col("kmers_sample_misclassified_count"), pl.col("kmers_sample_total_count")).alias("kmers_sample_misclassifiedVStotal_ratio"),
+            safe_div((pl.col("kmers_sample_clade_count") + pl.col("kmers_sample_lineage_count")), pl.col("kmers_sample_total_count")).alias("kmers_sample_supportingVStotal_ratio"),
+            safe_div(pl.col("kmers_sample_exclade_count"), pl.col("kmers_sample_total_count")).alias("kmers_sample_excladeVStotal_ratio"),
+
+            safe_div(pl.col("kmers_sample_root_count"), pl.col("kmers_sample_exclade_count")).alias("kmers_sample_rootVSexclade_ratio"),
+            safe_div(pl.col("kmers_sample_lineage_count"), pl.col("kmers_sample_exclade_count")).alias("kmers_sample_lineageVSexclade_ratio"),
+        ])
+    )
+
+    # 5. Calculate Weighted Distance/Depth Stats
+    click.secho("Phase 3/4: Analyzing taxonomic distance distribution per sample...", fg="cyan", err=True)
+    
+    dist_base_lf = (
+        labeled_lf
+        .filter((~pl.col("is_in_clade")) & (pl.col("kmer_tax_id") > 0))
+    )
+    
+    unique_pairs = dist_base_lf.select(["t_id", "kmer_tax_id"]).unique().collect()
+    root_ids = unique_pairs["t_id"].to_numpy()
+    kmer_ids = unique_pairs["kmer_tax_id"].to_numpy()
+    
+    lca_ids = tree.get_lca_batch(root_ids, kmer_ids)
+    lca_depths = tree.depths[tree._get_indices(lca_ids)]
+    
+    pair_metrics_df = unique_pairs.with_columns([
+        pl.Series("lca_depth", lca_depths.astype(np.uint8)),
+        pl.Series("lca_id", lca_ids.astype(np.uint32))
+    ])
+
+    dist_lf = dist_base_lf.join(pair_metrics_df.lazy(), on=["t_id", "kmer_tax_id"]).with_columns([
+        ((pl.col("root_depth") - pl.col("lca_depth")) + (pl.col("kmer_depth") - pl.col("lca_depth"))).alias("distance"),
+        safe_div(pl.col("lca_depth"), (pl.col("root_depth").cast(pl.Int32) - 1)).alias("relative_lca_depth"),
+        safe_div(pl.col("kmer_depth"), (pl.col("root_depth").cast(pl.Int32) - 1)).alias("relative_k_depth")
+    ])
+    
+    misclassified_dist_lf = dist_lf.filter(~pl.col("is_in_lineage"))
+    
+    dist_stats = calculate_weighted_stats(misclassified_dist_lf, "distance", "kmer_count", ["sample_id", "t_id"], "kmers_sample_misclassified_dist")
+    depth_stats = calculate_weighted_stats(misclassified_dist_lf, "kmer_depth", "kmer_count", ["sample_id", "t_id"], "kmers_sample_misclassified_depth")
+    lca_stats = calculate_weighted_stats(misclassified_dist_lf, "relative_lca_depth", "kmer_count", ["sample_id", "t_id"], "kmers_sample_misclassified_relative_lca_depth")
+    
+    lineage_dist_lf = dist_lf.filter(pl.col("is_in_lineage"))
+    lineage_stats = calculate_weighted_stats(lineage_dist_lf, "relative_k_depth", "kmer_count", ["sample_id", "t_id"], "kmers_sample_lineage_relative_depth")
+
+    # 6. Top Hits
+    click.secho("Phase 4/4: Identifying top 3 taxa for out-of-clade k-mer hits per sample...", fg="cyan", err=True)
+    
+    exclade_pooled = dist_lf.collect()
+    misclassified_pooled = exclade_pooled.filter(~pl.col("is_in_lineage"))
+    
+    top_hits = (
+        misclassified_pooled
+        .group_by(["sample_id", "t_id"])
+        .agg([
+            pl.col("kmer_tax_id").sort_by(["kmer_count", "kmer_tax_id"], descending=[True, False]).head(3).alias("kmers_sample_misclassified_top3_taxids"),
+            (pl.col("kmer_count").sort_by(["kmer_count", "kmer_tax_id"], descending=[True, False]).head(3) / pl.col("kmer_count").sum()).alias("kmers_sample_misclassified_top3_shares")
+        ])
+    ).join(
+        exclade_pooled
+        .group_by(["sample_id", "t_id"])
+        .agg([
+            pl.col("kmer_tax_id").sort_by(["kmer_count", "kmer_tax_id"], descending=[True, False]).head(3).alias("kmers_sample_exclade_top3_taxids"),
+            (pl.col("kmer_count").sort_by(["kmer_count", "kmer_tax_id"], descending=[True, False]).head(3) / pl.col("kmer_count").sum()).alias("kmers_sample_exclade_top3_shares")
+        ]), on=["sample_id", "t_id"], how="full", coalesce=True
+    )
+    
+    all_top_ids = top_hits["kmers_sample_misclassified_top3_taxids"].explode().drop_nulls().unique().to_list()
+    exclade_ids = top_hits["kmers_sample_exclade_top3_taxids"].explode().drop_nulls().unique().to_list()
+    all_top_ids = list(set(all_top_ids + exclade_ids))
+    
+    if all_top_ids:
+        names_df = tree.annotate(list(set(all_top_ids))).select(["t_id", "t_scientific_name"])
+        names_map = dict(zip(names_df["t_id"].to_list(), names_df["t_scientific_name"].to_list()))
+    else:
+        names_map = {}
+    
+    top_hits = top_hits.with_columns([
+        pl.col("kmers_sample_misclassified_top3_taxids").map_elements(
+            lambda ids: [names_map.get(tid, "Unknown") for tid in ids] if ids is not None else None,
+            return_dtype=pl.List(pl.String)
+        ).alias("kmers_sample_misclassified_top3_names"),
+        pl.col("kmers_sample_exclade_top3_taxids").map_elements(
+            lambda ids: [names_map.get(tid, "Unknown") for tid in ids] if ids is not None else None,
+            return_dtype=pl.List(pl.String)
+        ).alias("kmers_sample_exclade_top3_names")
+    ])
+
+    # 7. Final Join & Save
+    click.secho(f"Merging all features into {output_file.name}...", fg="cyan", err=True)
+    
+    final_df = (
+        counts_lf.collect()
+        .join(dist_stats.collect(), on=["sample_id", "t_id"], how="left")
+        .join(depth_stats.collect(), on=["sample_id", "t_id"], how="left")
+        .join(lca_stats.collect(), on=["sample_id", "t_id"], how="left")
+        .join(lineage_stats.collect(), on=["sample_id", "t_id"], how="left")
+        .join(top_hits, on=["sample_id", "t_id"], how="left")
+        .sort(["sample_id", "t_id"])
+    )
+
+    final_df.write_parquet(output_file, compression="zstd")
+
+    first_file = list(Path(input_pattern).parent.glob(Path(input_pattern).name))[0]
+    meta_src = read_companion_metadata(first_file) or {}
+
+    meta = get_standard_metadata(
+        file_type="READ_LEN_FEATURE_LONG_PARQUET", # Re-using this general structure
+        source_path=Path(input_pattern).parent,
+        compression="zstd",
+        sorting="sample_id, t_id",
+        data_standard=meta_src.get("data_standard", "MIXED")
+    )
+    save_companion_metadata(output_file, meta)
+
+    return {
+        "records_processed": final_df.height,
+        "unique_taxa": final_df["t_id"].n_unique(),
+        "output_file": str(output_file)
+    }
+
+def produce_feature_kmer_stability_logic(
+    input_parquet: Path,
+    output_file: Path,
+    cores: Optional[int] = None,
+    overwrite: bool = False
+) -> Dict[str, Any]:
+    """
+    Orchestrates the inter-sample Stability feature generation engine.
+
+    This engine calculates the variance and consistency of the 13 classification
+    quality ratios across all samples to provide a robust signal to machine learning
+    models distinguishing between stable biological signal and erratic noise.
+
+    Args:
+        input_parquet : Path to the long-format .parquet file generated by kmer-sample.
+        output_file   : Path to save the resulting feature table (CSV, TSV, or Parquet).
+        cores         : Number of threads to dedicate to Polars.
+        overwrite     : Whether to overwrite an existing output file.
+
+    Returns:
+        A dictionary containing processing statistics.
+    """
+    if output_file.exists() and not overwrite:
+        raise FileExistsError(f"Output file '{output_file}' already exists. Use --overwrite to replace.")
+
+    check_write_permission(output_file)
+
+    if cores:
+        os.environ["POLARS_MAX_THREADS"] = str(cores)
+
+    click.secho(f"Scanning sample data from '{input_parquet.name}'...", fg="cyan", err=True)
+    lf = pl.scan_parquet(input_parquet)
+    
+    # Identify total number of unique samples to calculate correct project-wide occupancy
+    total_samples = lf.select("sample_id").unique().collect().height
+    click.secho(f"Found {total_samples} unique samples in dataset.", fg="cyan", err=True)
+
+    click.secho("Calculating stability features across samples...", fg="cyan", err=True)
+
+    TARGET_RATIOS = [
+        "kmers_sample_cladeVSclassified_ratio",
+        "kmers_sample_lineageVSclassified_ratio",
+        "kmers_sample_misclassifiedVSclassified_ratio",
+        "kmers_sample_rootVSclassified_ratio",
+        "kmers_sample_cladeVStotal_ratio",
+        "kmers_sample_classifiedVStotal_ratio",
+        "kmers_sample_lineageVStotal_ratio",
+        "kmers_sample_rootVStotal_ratio",
+        "kmers_sample_misclassifiedVStotal_ratio",
+        "kmers_sample_excladeVStotal_ratio",
+        "kmers_sample_supportingVStotal_ratio",
+        "kmers_sample_rootVSexclade_ratio",
+        "kmers_sample_lineageVSexclade_ratio"
+    ]
+
+    base_agg = [
+        pl.len().alias("_taxon_sample_count"),
+        (pl.len() / total_samples).alias("kmers_stability_occupancy_ratio")
+    ]
+
+    for ratio in TARGET_RATIOS:
+        base_name = ratio.replace("kmers_sample_", "kmers_stability_")
+        base_agg.extend([
+            pl.col(ratio).mean().alias(f"{base_name}_mean"),
+            pl.col(ratio).median().alias(f"{base_name}_median"),
+            
+            # Polars std() correctly ignores nulls and yields null if n<=1
+            pl.col(ratio).std().alias(f"_{base_name}_stdev"),
+            
+            pl.col(ratio).quantile(0.05).alias(f"{base_name}_p05"),
+            pl.col(ratio).quantile(0.95).alias(f"{base_name}_p95"),
+            
+            # Count valid (non-null) instances of this ratio
+            pl.col(ratio).drop_nulls().len().alias(f"_{base_name}_valid_n")
+        ])
+
+    agg_lf = lf.group_by("t_id").agg(base_agg)
+
+    # Calculate derived stats: CV and Presence
+    final_exprs = []
+    for ratio in TARGET_RATIOS:
+        base_name = ratio.replace("kmers_sample_", "kmers_stability_")
+        final_exprs.extend([
+            pl.when(pl.col(f"{base_name}_mean") != 0)
+              .then(pl.col(f"_{base_name}_stdev") / pl.col(f"{base_name}_mean"))
+              .otherwise(None)
+              .alias(f"{base_name}_cv"),
+            
+            (pl.col(f"_{base_name}_valid_n") / pl.col("_taxon_sample_count")).alias(f"{base_name}_presence")
+        ])
+
+    final_lf = agg_lf.with_columns(final_exprs).drop([
+        c for c in agg_lf.collect_schema().names() if c.startswith("_") and c != "_taxon_sample_count"
+    ]).drop("_taxon_sample_count")
+
+    click.secho(f"Merging and writing output to {output_file.name}...", fg="cyan", err=True)
+    df = final_lf.collect().sort("t_id")
+    
+    ext = output_file.suffix.lower()
+    if ext == ".parquet":
+        df.write_parquet(output_file, compression="zstd")
+    elif ext == ".tsv":
+        df.write_csv(output_file, separator="\t", quote_style="non_numeric")
+    else:
+        df.write_csv(output_file, quote_style="non_numeric")
+
+    meta_src = read_companion_metadata(input_parquet) or {}
+    meta = get_standard_metadata(
+        file_type="FEATURE_TABLE",
+        source_path=input_parquet,
+        compression="zstd" if ext == ".parquet" else "None",
+        sorting="t_id",
+        data_standard=meta_src.get("data_standard", "MIXED")
+    )
+    save_companion_metadata(output_file, meta)
+
+    return {
+        "taxa_processed": df.height,
         "output_file": str(output_file)
     }
