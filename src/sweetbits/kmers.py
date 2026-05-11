@@ -65,7 +65,7 @@ def aggregate_kraken_kmers_logic(
             separator='\t',
             has_header=False,
             new_columns=["status", "read_id", "t_id_raw", "length", "mhg", "kmer_str"],
-            schema_overrides={"t_id_raw": pl.UInt32}
+            schema_overrides={"t_id_raw": pl.UInt32, "length": pl.String}
         )
         .filter(pl.col("status") == "C")
         .select("t_id_raw")
@@ -138,7 +138,7 @@ def aggregate_kraken_kmers_logic(
             separator='\t',
             has_header=False,
             new_columns=["status", "read_id", "t_id_raw", "length", "mhg", "kmer_str"],
-            schema_overrides={"t_id_raw": pl.UInt32}
+            schema_overrides={"t_id_raw": pl.UInt32, "length": pl.String}
         )
         .filter(pl.col("status") == "C")
         # Inner join with clade_map_df effectively filters for only species-clade reads

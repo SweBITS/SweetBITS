@@ -14,7 +14,7 @@ from sweetbits.tables import generate_table_logic
 from sweetbits.reads import extract_reads_logic
 from sweetbits.annotate import annotate_table_logic
 from sweetbits.convert import convert_kraken_logic
-from sweetbits.features import produce_feature_uniq_minimizer_corr_logic, produce_feature_kmer_global_logic
+from sweetbits.features import produce_feature_uniq_minimizer_corr_logic, produce_feature_kmer_global_logic, produce_feature_read_lengths_global_logic, produce_feature_read_lengths_sample_logic
 from sweetbits.kmers import aggregate_kraken_kmers_logic
 
 def print_splash():
@@ -176,6 +176,68 @@ def produce_feature_kmer_global(input_pattern, taxonomy, output, cores, overwrit
         summary = produce_feature_kmer_global_logic(
             input_pattern=input_pattern,
             taxonomy_dir=taxonomy,
+            output_file=output,
+            cores=cores,
+            overwrite=overwrite
+        )
+        summary["status"] = "Success"
+        print_footer(start_time, summary)
+    except Exception as e:
+        click.secho(f"Error: {str(e)}", fg="red", err=True)
+        sys.exit(1)
+
+@feature.command(name="read-lengths-global", short_help="Calculate global read length distribution features.")
+@click.argument("input_pattern")
+@click.option("--output", "-o", type=click.Path(path_type=Path), required=True, help="Path to summary output file (.csv, .tsv, .parquet).")
+@click.option("--min-reads", type=int, default=50, help="Minimum reads for global taxon stats (Default: 50).")
+@click.option("--cores", type=int, help="Number of CPU cores to use (Default: all available).")
+@click.option("--overwrite", is_flag=True, help="Overwrite output file if it exists.")
+def produce_feature_read_lengths_global(input_pattern, output, min_reads, cores, overwrite):
+    """
+    Calculates globally aggregated read length features (mean, median, CV, p05, p95) 
+    by pooling data across all samples matching the input pattern.
+    Produces a global feature table (one t_id per row).
+    """
+    start_time = time.time()
+    ctx = click.get_current_context()
+    print_splash()
+    print_invocation_info()
+    print_parameters(ctx.params)
+    
+    try:
+        summary = produce_feature_read_lengths_global_logic(
+            input_pattern=input_pattern,
+            output_file=output,
+            min_reads=min_reads,
+            cores=cores,
+            overwrite=overwrite
+        )
+        summary["status"] = "Success"
+        print_footer(start_time, summary)
+    except Exception as e:
+        click.secho(f"Error: {str(e)}", fg="red", err=True)
+        sys.exit(1)
+
+@feature.command(name="read-lengths-sample", short_help="Calculate per-sample read length features.")
+@click.argument("input_pattern")
+@click.option("--output", "-o", type=click.Path(path_type=Path), required=True, help="Path to output long-format Parquet file.")
+@click.option("--cores", type=int, help="Number of CPU cores to use (Default: all available).")
+@click.option("--overwrite", is_flag=True, help="Overwrite output file if it exists.")
+def produce_feature_read_lengths_sample(input_pattern, output, cores, overwrite):
+    """
+    Calculates per-sample read length features for every taxon in every sample 
+    matching the input pattern. Produces an unfiltered long-format Parquet file 
+    for visualization and timeline analysis.
+    """
+    start_time = time.time()
+    ctx = click.get_current_context()
+    print_splash()
+    print_invocation_info()
+    print_parameters(ctx.params)
+    
+    try:
+        summary = produce_feature_read_lengths_sample_logic(
+            input_pattern=input_pattern,
             output_file=output,
             cores=cores,
             overwrite=overwrite

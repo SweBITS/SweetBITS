@@ -131,7 +131,7 @@ sweetbits produce feature uniq-minimizer-corr merged_reports.parquet \
     --overwrite
 ```
 
-### Grand Global K-mer Features (`kmer-global`)
+### Global K-mer Features (`kmer-global`)
 Calculates globally aggregated k-mer features by pooling data from multiple samples. This is a two-step process: Ingestion followed by Feature Extraction.
 
 #### Step 1: Ingest K-mers
@@ -142,12 +142,12 @@ sweetbits collect kraken kmers Ki-2022_01_001.kraken \
     --output-dir ./kmer_aggregation
 ```
 
-#### Step 2: Extract Grand Global Features
+#### Step 2: Extract Global Features
 ```bash
 # Pool all ingested samples to create global profiles
 sweetbits produce feature kmer-global "./kmer_aggregation/*.kmers.parquet" \
     --taxonomy /path/to/joltax_cache \
-    --output grand_global_features.csv
+    --output kmers_global_features.csv
 ```
 
 ### Full Validation Workflow

@@ -129,6 +129,23 @@ A summarized parquet file representing a single sample's k-mer hit counts per sp
 | `kmer_tax_id` | UInt32 | The TaxID of the k-mer hit |
 | `kmer_count` | UInt64 | Number of times this hit appeared in reads for this t_id |
 
+### 3.5 `<READ_LEN_FEATURE_LONG_PARQUET>`
+A long-format parquet file containing per-sample read length statistics for every taxon.
+**Metadata:** Must include `file_type: READ_LEN_FEATURE_LONG_PARQUET`.
+
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `t_id` | UInt32 | The taxonomic identifier |
+| `sample_id` | Categorical | The unique sample identifier |
+| `year` | UInt16 | ISO year (Optional) |
+| `week` | UInt8 | ISO week (Optional) |
+| `reads_sample_total_count` | UInt64 | Total reads for this taxon in this sample |
+| `reads_sample_readlen_mean` | Float64 | Weighted mean read length |
+| `reads_sample_readlen_p05` | Float64 | 5th percentile |
+| `reads_sample_readlen_median` | Float64 | 50th percentile |
+| `reads_sample_readlen_p95` | Float64 | 95th percentile |
+| `reads_sample_readlen_cv` | Float64 | Coefficient of Variation |
+
 ### 4. `<FEATURE_TABLE>`
 A table (CSV, TSV, or Parquet) containing quality features calculated for every taxon.
 **Metadata:** Must include `file_type: FEATURE_TABLE`.
@@ -136,8 +153,9 @@ A table (CSV, TSV, or Parquet) containing quality features calculated for every 
 | Column | Type | Description |
 | :--- | :--- | :--- |
 | `t_id` | UInt32 | The taxonomic identifier |
-| `grand_*` | various | Statistical evidence ratios and counts |
-| `mean_*` | Float64 | Weighted distributional means |
+| `kmers_global_*` | various | Statistical evidence ratios and counts |
+| `reads_global_*` | Float64 | Weighted distributional means and counts |
+| `mm_*` | various | Minimizer correlation features |
 
 ---
 
@@ -208,6 +226,25 @@ Validates taxonomic assignments by correlating observed unique minimizer coverag
   - `--output FILE`: Path to summary output file (.csv, .tsv, .parquet).
   - `--output-long FILE`: (Optional) Path to save per-sample feature metrics (.parquet).
   - `--bad-samples FILE`: (Optional) List of sample IDs to exclude from correlation.
+  - `--overwrite`: Overwrite output file if it exists.
+
+#### `produce feature read-lengths-global`
+Calculates globally aggregated read length features (mean, median, CV, p05, p95) by pooling data across all samples.
+- **Inputs:** Glob pattern for `<READ_LEN_PARQUET>` files.
+- **Arguments:**
+  - `INPUT_PATTERN`: Glob pattern (e.g., `results/*.read_lengths.parquet`).
+  - `--output FILE`: Path to global summary output file (.csv, .tsv, .parquet).
+  - `--min-reads INT`: Minimum reads for global taxon stats (Default: 50).
+  - `--cores INT`: Number of CPU cores to use.
+  - `--overwrite`: Overwrite output file if it exists.
+
+#### `produce feature read-lengths-sample`
+Calculates per-sample read length features for every taxon detected in each sample.
+- **Inputs:** Glob pattern for `<READ_LEN_PARQUET>` files.
+- **Arguments:**
+  - `INPUT_PATTERN`: Glob pattern (e.g., `results/*.read_lengths.parquet`).
+  - `--output FILE`: Path to output long-format Parquet file.
+  - `--cores INT`: Number of CPU cores to use.
   - `--overwrite`: Overwrite output file if it exists.
 
 #### `produce reads`
@@ -302,7 +339,7 @@ Instead of embedding metadata in the Parquet header, SweetBITS uses a Strict Mod
 7. [x] Implement Parquet version compatibility checking.
 8. [x] Implement `collect kraken classifications` (Ingestion from raw Kraken/FASTQ).
 9. [x] Implement `collect kraken kmers` (Aggregation for ML features).
-10. [x] Implement `produce feature kmer-global` (Grand Global k-mer features).
+10. [x] Implement `produce feature kmer-global` (Global k-mer features).
 11. [x] Implement `produce feature uniq-minimizer-corr` (Minimizer correlations).
 12. [ ] Implement peak memory reporting for Windows (currently Unix-only).
 13. [ ] Future: `coda` command suite for Compositional Data Analysis.

@@ -25,52 +25,65 @@ This engine validates taxonomic assignments by comparing observed unique minimiz
 
 ---
 
-## 2. Grand Global K-mer Features (`kmer-global`)
-This engine pools all k-mer classification data across any number of samples to create a "Grand Total" evidence profile for every species in the dataset.
+## 2. Global K-mer Evidence Features (`kmer-global`)
+This engine pools all k-mer classification data across any number of samples to create a "Global Total" evidence profile for every species in the dataset.
 
-#### A. Core Count Metrics
-- **`grand_clade_kmers`**: Total k-mers classified to the target species or its descendants.
-- **`grand_classified_kmers`**: Total k-mers that received *any* taxonomic assignment.
-- **`grand_total_kmers`**: Absolute total of all k-mers (including unclassified).
-- **`grand_unclassified_kmers`**: Total number of k-mers that remained unclassified.
-- **`grand_lineage_kmers`**: Total classified k-mers hitting the taxonomic lineage (e.g., hitting the Genus but not the Species).
-- **`grand_root_kmers`**: Total k-mers hitting the Root (TaxID 1).
-- **`grand_misclassified_kmers`**: K-mers classified outside the species AND outside its lineage (potential noise).
+#### A. Core Count Metrics (`kmers_global_..._count`)
+- **`kmers_global_clade_count`**: Total k-mers classified to the target species or its descendants.
+- **`kmers_global_classified_count`**: Total k-mers that received *any* taxonomic assignment.
+- **`kmers_global_total_count`**: Absolute total of all k-mers (including unclassified).
+- **`kmers_global_unclassified_count`**: Total number of k-mers that remained unclassified.
+- **`kmers_global_lineage_count`**: Total classified k-mers hitting the taxonomic lineage (e.g., hitting the Genus but not the Species).
+- **`kmers_global_root_count`**: Total k-mers hitting the Root (TaxID 1).
+- **`kmers_global_misclassified_count`**: K-mers classified outside the species AND outside its lineage (potential noise).
+- **`kmers_global_exclade_count`**: Total k-mers hitting anything *outside* the target species clade.
 
-#### B. Evidence Ratios
-These features provide proportions normalized by either **Classified** k-mers or **Total** k-mers.
+#### B. Evidence Ratios (`kmers_global_..._ratio`)
+These features provide proportions normalized by either **Classified** k-mers or **Total** k-mers using the `XVSY_ratio` format.
 
 **Relative to Classified K-mers:**
-- **`grand_clade_to_classified_kmer_ratio`**: Proportion of classified evidence that correctly hits the clade.
-- **`grand_lineage_to_classified_kmer_ratio`**: Proportion of classified evidence hitting the lineage (high-level assignment).
-- **`grand_misclassified_to_classified_kmer_ratio`**: Proportion of classified evidence hitting unrelated taxa.
-- **`grand_root_to_classified_kmer_ratio`**: Proportion of classified evidence at the root.
-- **`grand_supporting_to_misclassified_kmer_ratio`**: Ratio of "Good" hits (Clade + Lineage) to "Bad" hits (Misclassified).
+- **`kmers_global_cladeVSclassified_ratio`**: Proportion of classified evidence that correctly hits the clade.
+- **`kmers_global_lineageVSclassified_ratio`**: Proportion of classified evidence hitting the lineage (high-level assignment).
+- **`kmers_global_misclassifiedVSclassified_ratio`**: Proportion of classified evidence hitting unrelated taxa.
+- **`kmers_global_rootVSclassified_ratio`**: Proportion of classified evidence at the root.
+- **`kmers_global_supportingVSmisclassified_ratio`**: Ratio of "Good" hits (Clade + Lineage) to "Bad" hits (Misclassified).
 
 **Relative to Total K-mers (Confidence Scores):**
-- **`grand_clade_to_total_kmer_ratio`**: The global Kraken 2 Confidence Score for this species.
-- **`grand_classified_to_total_kmer_ratio`**: Global classification rate for this taxon's reads.
-- **`grand_lineage_to_total_kmer_ratio`**: Proportion of all k-mers hitting the lineage.
-- **`grand_root_to_total_kmer_ratio`**: Proportion of all k-mers hitting the root.
-- **`grand_misclassified_to_total_kmer_ratio`**: Global misclassification proportion.
-- **`grand_supporting_to_total_kmer_ratio`**: Proportion of all k-mers hitting Clade + Lineage.
+- **`kmers_global_cladeVStotal_ratio`**: The global Kraken 2 Confidence Score for this species.
+- **`kmers_global_classifiedVStotal_ratio`**: Global classification rate for this taxon's reads.
+- **`kmers_global_lineageVStotal_ratio`**: Proportion of all k-mers hitting the lineage.
+- **`kmers_global_rootVStotal_ratio`**: Proportion of all k-mers hitting the root.
+- **`kmers_global_misclassifiedVStotal_ratio`**: Global misclassification proportion.
+- **`kmers_global_supportingVStotal_ratio`**: Proportion of all k-mers hitting Clade + Lineage.
 
 **Internal Exclade Ratios:**
-- **`grand_root_to_exclade_kmer_ratio`**: Proportion of off-target hits that were pushed to the root.
-- **`grand_lineage_to_exclade_kmer_ratio`**: Proportion of off-target hits that hit the lineage.
-- **`grand_exclade_to_total_kmer_ratio`**: Proportion of all k-mers hitting anything outside the clade.
+- **`kmers_global_rootVSexclade_ratio`**: Proportion of off-target hits that were pushed to the root.
+- **`kmers_global_lineageVSexclade_ratio`**: Proportion of off-target hits that hit the lineage.
+- **`kmers_global_excladeVStotal_ratio`**: Proportion of all k-mers hitting anything outside the clade.
 
 #### C. Taxonomic Distance & Depth (Weighted Stats)
-*Metrics: `mean_`, `median_`, `cv_`, `p05_`, `p95_` for:*
-- **`grand_misclassified_kmer_distance`**: The number of nodes in the tree between the assigned species and the unrelated k-mer hit. Large distances suggest egregious misclassifications.
-- **`grand_misclassified_kmer_depth`**: The absolute depth in the tree of the taxa where misclassified k-mers hit.
-- **`grand_misclassified_kmer_relative_lca_depth`**: Depth of the Lowest Common Ancestor (LCA) relative to the target species depth. Values near 1.0 mean the "noise" is taxonomically close to the target.
-- **`grand_lineage_kmer_relative_depth`**: Where in the lineage k-mer hits are clustering (e.g., just above species vs. near root).
+*Metrics: `mean`, `median`, `cv`, `p05`, `p95` for:*
+- **`kmers_global_misclassified_dist_[STAT]`**: The number of nodes in the tree between the assigned species and the unrelated k-mer hit. Large distances suggest egregious misclassifications.
+- **`kmers_global_misclassified_depth_[STAT]`**: The absolute depth in the tree of the taxa where misclassified k-mers hit.
+- **`kmers_global_misclassified_relative_lca_depth_[STAT]`**: Depth of the Lowest Common Ancestor (LCA) relative to the target species depth. Values near 1.0 mean the "noise" is taxonomically close to the target.
+- **`kmers_global_lineage_relative_depth_[STAT]`**: Where in the lineage k-mer hits are clustering (e.g., just above species vs. near root).
 
 #### D. Top Hit Profiles
-- **`grand_top_5_misclassified_kmer_names`**: Names of the top 5 unrelated taxonomic competitors.
-- **`grand_top_5_misclassified_kmer_tax_ids`**: TaxIDs of the top 5 competitors.
-- **`grand_top_5_misclassified_kmer_shares`**: Percentage of total misclassified k-mers held by each of the top 5 taxa.
+- **`kmers_global_misclassified_top5_names`**: Names of the top 5 unrelated taxonomic competitors.
+- **`kmers_global_misclassified_top5_taxids`**: TaxIDs of the top 5 competitors.
+- **`kmers_global_misclassified_top5_shares`**: Percentage of total misclassified k-mers held by each of the top 5 taxa.
+
+---
+
+### 3. Read Length Distribution Features (`reads_{global,sample}_...`)
+These features quantify the physical fragmentation of the DNA assigned to a taxon. Ancient or highly degraded DNA typically shows shorter mean lengths and specific distribution shapes.
+
+- **`reads_[scope]_total_count`**: Total reads analyzed.
+- **`reads_[scope]_readlen_mean`**: Weighted mean read length.
+- **`reads_[scope]_readlen_median`**: 50th percentile.
+- **`reads_[scope]_readlen_p05`**: 5th percentile.
+- **`reads_[scope]_readlen_p95`**: 95th percentile.
+- **`reads_[scope]_readlen_cv`**: Coefficient of Variation.
 
 ---
 

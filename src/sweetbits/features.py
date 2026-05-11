@@ -2,11 +2,15 @@
 sweetbits.features
 Statistical and mathematical engines for metagenomic classification quality feature extraction.
 
-This module provides two primary feature extraction engines:
-1. Grand Global K-mer Features: Pools all k-mer classification data across samples to 
+This module provides four primary feature extraction engines:
+1. Global K-mer Features: Pools all k-mer classification data across samples to 
    create a comprehensive evidence profile for every taxon.
 2. Unique Minimizer Correlations: Validates taxonomic presence by comparing observed 
    minimizer coverage against a probabilistic expectation model.
+3. Global Read Length Features: Pools all read length distributions to calculate 
+   robust project-wide statistical metrics (Mean, Median, CV) per taxon.
+4. Per-Sample Read Length Features: Generates high-resolution temporal timelines of 
+   read length statistics for every taxon detected in each sample.
 """
 
 import polars as pl
@@ -47,7 +51,7 @@ def calculate_weighted_stats(
     lf: pl.LazyFrame, 
     metric_col: str, 
     weight_col: str, 
-    group_col: str,
+    group_col: Any,
     suffix: str
 ) -> pl.LazyFrame:
     """
@@ -61,16 +65,18 @@ def calculate_weighted_stats(
         lf         : LazyFrame containing the raw observations and weights.
         metric_col : The column to calculate statistics for (e.g., 'distance').
         weight_col : The column providing the weights (e.g., 'kmer_count').
-        group_col  : The taxonomic key to group by (typically 't_id').
+        group_col  : The taxonomic key(s) to group by (e.g., 't_id' or ['t_id', 'sample_id']).
         suffix     : String suffix to append to the output column names.
 
     Returns:
-        A LazyFrame with one row per group_col and the calculated statistical columns.
+        A LazyFrame with one row per grouping and the calculated statistical columns.
     """
     # 1. Weighted Mean
     # Calculated as sum(value * weight) / sum(weight)
+    # We cast value to Float64 before multiplication to prevent 32-bit integer overflow
+    # with high read counts (e.g. 30M reads * 150bp).
     mean_lf = lf.group_by(group_col).agg(
-        ((pl.col(metric_col) * pl.col(weight_col)).sum() / pl.col(weight_col).sum()).alias(f"mean_{suffix}")
+        ((pl.col(metric_col).cast(pl.Float64) * pl.col(weight_col)).sum() / pl.col(weight_col).sum()).alias(f"{suffix}_mean")
     )
 
     # 2. Weighted Quantiles
@@ -82,13 +88,13 @@ def calculate_weighted_stats(
         .agg([
             pl.col(metric_col).gather(
                 pl.col(weight_col).cum_sum().search_sorted(pl.col(weight_col).sum() * 0.05)
-            ).first().alias(f"p05_{suffix}"),
+            ).first().alias(f"{suffix}_p05"),
             pl.col(metric_col).gather(
                 pl.col(weight_col).cum_sum().search_sorted(pl.col(weight_col).sum() * 0.50)
-            ).first().alias(f"median_{suffix}"),
+            ).first().alias(f"{suffix}_median"),
             pl.col(metric_col).gather(
                 pl.col(weight_col).cum_sum().search_sorted(pl.col(weight_col).sum() * 0.95)
-            ).first().alias(f"p95_{suffix}")
+            ).first().alias(f"{suffix}_p95")
         ])
     )
 
@@ -101,18 +107,18 @@ def calculate_weighted_stats(
             (
                 pl.when(pl.col(weight_col).sum() > 1)
                 .then(
-                    ((pl.col(weight_col) * (pl.col(metric_col) - pl.col(f"mean_{suffix}")).pow(2)).sum() /
+                    ((pl.col(weight_col) * (pl.col(metric_col) - pl.col(f"{suffix}_mean")).pow(2)).sum() /
                     (pl.col(weight_col).sum() - 1)).sqrt()
                 )
                 .otherwise(None)
             ).alias("stdev"),
-            pl.col(f"mean_{suffix}").first().alias("mean")
+            pl.col(f"{suffix}_mean").first().alias("mean")
         ])
         .with_columns(
             pl.when(pl.col("mean") != 0)
             .then(pl.col("stdev") / pl.col("mean"))
             .otherwise(None)
-            .alias(f"cv_{suffix}")
+            .alias(f"{suffix}_cv")
         )
         .drop(["stdev", "mean"])
     )
@@ -127,7 +133,7 @@ def produce_feature_kmer_global_logic(
     overwrite: bool = False
 ) -> Dict[str, Any]:
     """
-    Orchestrates the Grand Global k-mer feature generation engine.
+    Orchestrates the Global k-mer feature generation engine.
 
     This engine operates in four distinct phases:
     1. Labeling: Every k-mer hit is categorized as 'Clade', 'Lineage', or 'Misclassified' 
@@ -171,12 +177,12 @@ def produce_feature_kmer_global_logic(
         "exit": tree.exit_times
     })
 
-    # 2. Pool Data (Grand Totals)
+    # 2. Pool Data (Global Totals)
     # Scans all sample summaries and groups by (target_taxon, kmer_hit).
-    # TaxID 0 is explicitly kept here to support grand total and unclassified ratio math.
+    # TaxID 0 is explicitly kept here to support global total and unclassified ratio math.
     click.secho(f"Scanning and pooling k-mer data from '{input_pattern}'...", fg="cyan", err=True)
     
-    grand_lf = (
+    global_lf = (
         pl.scan_parquet(input_pattern)
         .group_by(["t_id", "kmer_tax_id"])
         .agg(pl.col("kmer_count").cast(pl.UInt64).sum())
@@ -190,7 +196,7 @@ def produce_feature_kmer_global_logic(
     # This summarized table is small enough to fit in RAM but ensures that the 
     # massive project-wide Parquet scan happens exactly once.
     labeled_eager_df = (
-        grand_lf
+        global_lf
         .join(node_data.lazy().rename({"t_id": "target_t_id", "depth": "root_depth", "entry": "root_entry", "exit": "root_exit"}), left_on="t_id", right_on="target_t_id", how="left")
         .join(node_data.lazy().rename({"t_id": "kmer_tax_id", "depth": "kmer_depth", "entry": "kmer_entry", "exit": "kmer_exit"}), on="kmer_tax_id", how="left")
         .with_columns([
@@ -206,42 +212,42 @@ def produce_feature_kmer_global_logic(
 
     # 4. Calculate Core Counts & Ratios
     # Phase 2/4: Calculates absolute counts and high-signal quality ratios.
-    click.secho("Phase 2/4: Calculating grand k-mer totals and ratios...", fg="cyan", err=True)
+    click.secho("Phase 2/4: Calculating global k-mer totals and ratios...", fg="cyan", err=True)
     
     counts_lf = (
         labeled_lf
         .group_by("t_id")
         .agg([
-            pl.col("kmer_count").filter(pl.col("is_in_clade")).sum().fill_null(0).alias("grand_clade_kmers"),
-            pl.col("kmer_count").filter((~pl.col("is_in_clade")) & (pl.col("kmer_tax_id") > 0)).sum().fill_null(0).alias("grand_exclade_kmers"),
-            pl.col("kmer_count").filter(pl.col("is_in_lineage") & (~pl.col("is_in_clade"))).sum().fill_null(0).alias("grand_lineage_kmers"),
-            pl.col("kmer_count").filter((pl.col("kmer_tax_id") == 1) & (~pl.col("is_in_clade"))).sum().fill_null(0).alias("grand_root_kmers"),
-            pl.col("kmer_count").sum().alias("grand_total_kmers")
+            pl.col("kmer_count").filter(pl.col("is_in_clade")).sum().fill_null(0).alias("kmers_global_clade_count"),
+            pl.col("kmer_count").filter((~pl.col("is_in_clade")) & (pl.col("kmer_tax_id") > 0)).sum().fill_null(0).alias("kmers_global_exclade_count"),
+            pl.col("kmer_count").filter(pl.col("is_in_lineage") & (~pl.col("is_in_clade"))).sum().fill_null(0).alias("kmers_global_lineage_count"),
+            pl.col("kmer_count").filter((pl.col("kmer_tax_id") == 1) & (~pl.col("is_in_clade"))).sum().fill_null(0).alias("kmers_global_root_count"),
+            pl.col("kmer_count").sum().alias("kmers_global_total_count")
         ])
         .with_columns([
-            (pl.col("grand_clade_kmers") + pl.col("grand_exclade_kmers")).alias("grand_classified_kmers"),
-            (pl.col("grand_exclade_kmers") - pl.col("grand_lineage_kmers")).alias("grand_misclassified_kmers")
+            (pl.col("kmers_global_clade_count") + pl.col("kmers_global_exclade_count")).alias("kmers_global_classified_count"),
+            (pl.col("kmers_global_exclade_count") - pl.col("kmers_global_lineage_count")).alias("kmers_global_misclassified_count")
         ])
         .with_columns([
-            (pl.col("grand_total_kmers") - pl.col("grand_classified_kmers")).alias("grand_unclassified_kmers")
+            (pl.col("kmers_global_total_count") - pl.col("kmers_global_classified_count")).alias("kmers_global_unclassified_count")
         ])
         .with_columns([
-            (pl.col("grand_clade_kmers") / pl.col("grand_classified_kmers")).alias("grand_clade_to_classified_kmer_ratio"),
-            (pl.col("grand_lineage_kmers") / pl.col("grand_classified_kmers")).alias("grand_lineage_to_classified_kmer_ratio"),
-            (pl.col("grand_misclassified_kmers") / pl.col("grand_classified_kmers")).alias("grand_misclassified_to_classified_kmer_ratio"),
-            (pl.col("grand_root_kmers") / pl.col("grand_classified_kmers")).alias("grand_root_to_classified_kmer_ratio"),
-            (pl.when(pl.col("grand_misclassified_kmers") > 0)
-             .then((pl.col("grand_clade_kmers") + pl.col("grand_lineage_kmers")) / pl.col("grand_misclassified_kmers"))
-             .otherwise(1.0)).alias("grand_supporting_to_misclassified_kmer_ratio"),
-            (pl.col("grand_clade_kmers") / pl.col("grand_total_kmers")).alias("grand_clade_to_total_kmer_ratio"),
-            (pl.col("grand_classified_kmers") / pl.col("grand_total_kmers")).alias("grand_classified_to_total_kmer_ratio"),
-            (pl.col("grand_lineage_kmers") / pl.col("grand_total_kmers")).alias("grand_lineage_to_total_kmer_ratio"),
-            (pl.col("grand_root_kmers") / pl.col("grand_total_kmers")).alias("grand_root_to_total_kmer_ratio"),
-            (pl.col("grand_misclassified_kmers") / pl.col("grand_total_kmers")).alias("grand_misclassified_to_total_kmer_ratio"),
-            (pl.col("grand_root_kmers") / pl.col("grand_exclade_kmers")).alias("grand_root_to_exclade_kmer_ratio"),
-            (pl.col("grand_lineage_kmers") / pl.col("grand_exclade_kmers")).alias("grand_lineage_to_exclade_kmer_ratio"),
-            (pl.col("grand_exclade_kmers") / pl.col("grand_total_kmers")).alias("grand_exclade_to_total_kmer_ratio"),
-            ((pl.col("grand_clade_kmers") + pl.col("grand_lineage_kmers")) / pl.col("grand_total_kmers")).alias("grand_supporting_to_total_kmer_ratio")
+            (pl.col("kmers_global_clade_count") / pl.col("kmers_global_classified_count")).alias("kmers_global_cladeVSclassified_ratio"),
+            (pl.col("kmers_global_lineage_count") / pl.col("kmers_global_classified_count")).alias("kmers_global_lineageVSclassified_ratio"),
+            (pl.col("kmers_global_misclassified_count") / pl.col("kmers_global_classified_count")).alias("kmers_global_misclassifiedVSclassified_ratio"),
+            (pl.col("kmers_global_root_count") / pl.col("kmers_global_classified_count")).alias("kmers_global_rootVSclassified_ratio"),
+            (pl.when(pl.col("kmers_global_misclassified_count") > 0)
+             .then((pl.col("kmers_global_clade_count") + pl.col("kmers_global_lineage_count")) / pl.col("kmers_global_misclassified_count"))
+             .otherwise(1.0)).alias("kmers_global_supportingVSmisclassified_ratio"),
+            (pl.col("kmers_global_clade_count") / pl.col("kmers_global_total_count")).alias("kmers_global_cladeVStotal_ratio"),
+            (pl.col("kmers_global_classified_count") / pl.col("kmers_global_total_count")).alias("kmers_global_classifiedVStotal_ratio"),
+            (pl.col("kmers_global_lineage_count") / pl.col("kmers_global_total_count")).alias("kmers_global_lineageVStotal_ratio"),
+            (pl.col("kmers_global_root_count") / pl.col("kmers_global_total_count")).alias("kmers_global_rootVStotal_ratio"),
+            (pl.col("kmers_global_misclassified_count") / pl.col("kmers_global_total_count")).alias("kmers_global_misclassifiedVStotal_ratio"),
+            (pl.col("kmers_global_root_count") / pl.col("kmers_global_exclade_count")).alias("kmers_global_rootVSexclade_ratio"),
+            (pl.col("kmers_global_lineage_count") / pl.col("kmers_global_exclade_count")).alias("kmers_global_lineageVSexclade_ratio"),
+            (pl.col("kmers_global_exclade_count") / pl.col("kmers_global_total_count")).alias("kmers_global_excladeVStotal_ratio"),
+            ((pl.col("kmers_global_clade_count") + pl.col("kmers_global_lineage_count")) / pl.col("kmers_global_total_count")).alias("kmers_global_supportingVStotal_ratio")
         ])
     )
 
@@ -282,13 +288,13 @@ def produce_feature_kmer_global_logic(
     misclassified_dist_lf = dist_lf.filter(~pl.col("is_in_lineage"))
     
     # Weighted statistics quantify the 'noise profile' for each species.
-    dist_stats = calculate_weighted_stats(misclassified_dist_lf, "distance", "kmer_count", "t_id", "grand_misclassified_kmer_distance")
-    depth_stats = calculate_weighted_stats(misclassified_dist_lf, "kmer_depth", "kmer_count", "t_id", "grand_misclassified_kmer_depth")
-    lca_stats = calculate_weighted_stats(misclassified_dist_lf, "relative_lca_depth", "kmer_count", "t_id", "grand_misclassified_kmer_relative_lca_depth")
+    dist_stats = calculate_weighted_stats(misclassified_dist_lf, "distance", "kmer_count", "t_id", "kmers_global_misclassified_dist")
+    depth_stats = calculate_weighted_stats(misclassified_dist_lf, "kmer_depth", "kmer_count", "t_id", "kmers_global_misclassified_depth")
+    lca_stats = calculate_weighted_stats(misclassified_dist_lf, "relative_lca_depth", "kmer_count", "t_id", "kmers_global_misclassified_relative_lca_depth")
     
     # Lineage-only statistics (hits between assigned species and root)
     lineage_dist_lf = dist_lf.filter(pl.col("is_in_lineage"))
-    lineage_stats = calculate_weighted_stats(lineage_dist_lf, "relative_k_depth", "kmer_count", "t_id", "grand_lineage_kmer_relative_depth")
+    lineage_stats = calculate_weighted_stats(lineage_dist_lf, "relative_k_depth", "kmer_count", "t_id", "kmers_global_lineage_relative_depth")
 
     # 6. Top Hits
     # Phase 4/4: Profiles the primary taxonomic competitors for each identification.
@@ -302,21 +308,21 @@ def produce_feature_kmer_global_logic(
         misclassified_pooled
         .group_by("t_id")
         .agg([
-            pl.col("kmer_tax_id").sort_by(["kmer_count", "kmer_tax_id"], descending=[True, False]).head(5).alias("grand_top_5_misclassified_kmer_tax_ids"),
-            (pl.col("kmer_count").sort_by(["kmer_count", "kmer_tax_id"], descending=[True, False]).head(5) / pl.col("kmer_count").sum()).alias("grand_top_5_misclassified_kmer_shares")
+            pl.col("kmer_tax_id").sort_by(["kmer_count", "kmer_tax_id"], descending=[True, False]).head(5).alias("kmers_global_misclassified_top5_taxids"),
+            (pl.col("kmer_count").sort_by(["kmer_count", "kmer_tax_id"], descending=[True, False]).head(5) / pl.col("kmer_count").sum()).alias("kmers_global_misclassified_top5_shares")
         ])
     ).join(
         exclade_pooled
         .group_by("t_id")
         .agg([
-            pl.col("kmer_tax_id").sort_by(["kmer_count", "kmer_tax_id"], descending=[True, False]).head(5).alias("grand_top_5_exclade_kmer_tax_ids"),
-            (pl.col("kmer_count").sort_by(["kmer_count", "kmer_tax_id"], descending=[True, False]).head(5) / pl.col("kmer_count").sum()).alias("grand_top_5_exclade_kmer_shares")
+            pl.col("kmer_tax_id").sort_by(["kmer_count", "kmer_tax_id"], descending=[True, False]).head(5).alias("kmers_global_exclade_top5_taxids"),
+            (pl.col("kmer_count").sort_by(["kmer_count", "kmer_tax_id"], descending=[True, False]).head(5) / pl.col("kmer_count").sum()).alias("kmers_global_exclade_top5_shares")
         ]), on="t_id", how="full", coalesce=True
     )
     
     # Resolve scientific names for the competitor TaxIDs in a single batch operation.
-    all_top_ids = top_hits["grand_top_5_misclassified_kmer_tax_ids"].explode().drop_nulls().unique().to_list()
-    exclade_ids = top_hits["grand_top_5_exclade_kmer_tax_ids"].explode().drop_nulls().unique().to_list()
+    all_top_ids = top_hits["kmers_global_misclassified_top5_taxids"].explode().drop_nulls().unique().to_list()
+    exclade_ids = top_hits["kmers_global_exclade_top5_taxids"].explode().drop_nulls().unique().to_list()
     all_top_ids = list(set(all_top_ids + exclade_ids))
     
     if all_top_ids:
@@ -326,14 +332,14 @@ def produce_feature_kmer_global_logic(
         names_map = {}
     
     top_hits = top_hits.with_columns([
-        pl.col("grand_top_5_misclassified_kmer_tax_ids").map_elements(
+        pl.col("kmers_global_misclassified_top5_taxids").map_elements(
             lambda ids: [names_map.get(tid, "Unknown") for tid in ids] if ids is not None else None,
             return_dtype=pl.List(pl.String)
-        ).alias("grand_top_5_misclassified_kmer_names"),
-        pl.col("grand_top_5_exclade_kmer_tax_ids").map_elements(
+        ).alias("kmers_global_misclassified_top5_names"),
+        pl.col("kmers_global_exclade_top5_taxids").map_elements(
             lambda ids: [names_map.get(tid, "Unknown") for tid in ids] if ids is not None else None,
             return_dtype=pl.List(pl.String)
-        ).alias("grand_top_5_exclade_kmer_names")
+        ).alias("kmers_global_exclade_top5_names")
     ])
 
     # 7. Final Join & Save
@@ -354,12 +360,12 @@ def produce_feature_kmer_global_logic(
     ext = output_file.suffix.lower()
     if ext != ".parquet":
         final_df = final_df.with_columns([
-            pl.col("grand_top_5_misclassified_kmer_tax_ids").list.eval(pl.element().cast(pl.String)).list.join(";"),
-            pl.col("grand_top_5_misclassified_kmer_names").list.join(";"),
-            pl.col("grand_top_5_misclassified_kmer_shares").list.eval(pl.element().round(4).cast(pl.String)).list.join(";"),
-            pl.col("grand_top_5_exclade_kmer_tax_ids").list.eval(pl.element().cast(pl.String)).list.join(";"),
-            pl.col("grand_top_5_exclade_kmer_names").list.join(";"),
-            pl.col("grand_top_5_exclade_kmer_shares").list.eval(pl.element().round(4).cast(pl.String)).list.join(";")
+            pl.col("kmers_global_misclassified_top5_taxids").list.eval(pl.element().cast(pl.String)).list.join(";"),
+            pl.col("kmers_global_misclassified_top5_names").list.join(";"),
+            pl.col("kmers_global_misclassified_top5_shares").list.eval(pl.element().round(4).cast(pl.String)).list.join(";"),
+            pl.col("kmers_global_exclade_top5_taxids").list.eval(pl.element().cast(pl.String)).list.join(";"),
+            pl.col("kmers_global_exclade_top5_names").list.join(";"),
+            pl.col("kmers_global_exclade_top5_shares").list.eval(pl.element().round(4).cast(pl.String)).list.join(";")
         ])
         if ext == ".tsv":
             final_df.write_csv(output_file, separator="\t", quote_style="non_numeric")
@@ -664,4 +670,174 @@ def produce_feature_uniq_minimizer_corr_logic(
         "valid_correlations": summary_df.filter(pl.col("mm_pearson_corr").is_not_null()).height,
         "output_format": ext[1:].upper(),
         "long_format_saved": True if output_long_file else False
+    }
+
+
+def produce_feature_read_lengths_global_logic(
+    input_pattern: str,
+    output_file: Path,
+    min_reads: int = 50,
+    cores: Optional[int] = None,
+    overwrite: bool = False
+) -> Dict[str, Any]:
+    """
+    Orchestrates the Global read length feature generation engine.
+
+    This engine pools read length distributions across all samples to calculate
+    robust project-wide statistical metrics (Mean, Median, p05, p95, CV) for every
+    taxon that meets the minimum read threshold.
+
+    Args:
+        input_pattern : Glob pattern for the ingested .read_lengths.parquet files.
+        output_file   : Path to save the global feature table (CSV, TSV, or Parquet).
+        min_reads     : Minimum total reads required for a taxon to be included.
+        cores         : Number of threads to dedicate to Polars.
+        overwrite     : Whether to overwrite an existing output file.
+
+    Returns:
+        A dictionary containing processing statistics.
+    """
+    if output_file.exists() and not overwrite:
+        raise FileExistsError(f"Output file '{output_file}' already exists. Use --overwrite to replace.")
+
+    check_write_permission(output_file)
+
+    if cores:
+        os.environ["POLARS_MAX_THREADS"] = str(cores)
+
+    click.secho(f"Scanning and pooling read lengths from '{input_pattern}'...", fg="cyan", err=True)
+    
+    base_lf = pl.scan_parquet(input_pattern)
+    
+    # 1. Pool counts across all samples
+    pooled_lf = (
+        base_lf
+        .group_by(["t_id", "read_length"])
+        .agg(pl.col("read_count").sum())
+    )
+    
+    # 2. Identify taxa passing the threshold
+    totals_lf = (
+        pooled_lf
+        .group_by("t_id")
+        .agg(pl.col("read_count").sum().alias("reads_global_total_count"))
+        .filter(pl.col("reads_global_total_count") >= min_reads)
+    )
+    
+    # 3. Calculate weighted statistics
+    stats_lf = calculate_weighted_stats(
+        pooled_lf.join(totals_lf.select("t_id"), on="t_id", how="inner"),
+        metric_col="read_length",
+        weight_col="read_count",
+        group_col="t_id",
+        suffix="reads_global_readlen"
+    ).join(totals_lf, on="t_id")
+
+    df = stats_lf.collect(engine="streaming").sort("t_id")
+
+    # 4. Save and Metadata
+    click.secho(f"Saving global results to {output_file.name}...", fg="cyan", err=True)
+    ext = output_file.suffix.lower()
+    if ext == ".parquet":
+        df.write_parquet(output_file, compression="zstd")
+    elif ext == ".tsv":
+        df.write_csv(output_file, separator="\t", quote_style="non_numeric")
+    else:
+        df.write_csv(output_file, quote_style="non_numeric")
+
+    # Detect data standard from metadata
+    first_file = list(Path(input_pattern).parent.glob(Path(input_pattern).name))[0]
+    from sweetbits.metadata import read_companion_metadata
+    meta = read_companion_metadata(first_file) or {}
+    
+    out_meta = get_standard_metadata(
+        file_type="FEATURE_TABLE",
+        source_path=Path(input_pattern).parent,
+        compression="zstd" if ext == ".parquet" else "None",
+        sorting="t_id",
+        data_standard=meta.get("data_standard", "GENERIC")
+    )
+    save_companion_metadata(output_file, out_meta)
+
+    return {
+        "taxa_processed": df.height,
+        "min_reads_filter": min_reads,
+        "output_file": str(output_file)
+    }
+
+def produce_feature_read_lengths_sample_logic(
+    input_pattern: str,
+    output_file: Path,
+    cores: Optional[int] = None,
+    overwrite: bool = False
+) -> Dict[str, Any]:
+    """
+    Orchestrates the Per-Sample read length feature generation engine.
+
+    This engine calculates weighted read length statistics for every taxon detected
+    in each individual sample. No minimum read filter is applied to ensure 
+    complete temporal timelines for visualization.
+
+    Args:
+        input_pattern : Glob pattern for the ingested .read_lengths.parquet files.
+        output_file   : Path to save the long-format parquet table.
+        cores         : Number of threads to dedicate to Polars.
+        overwrite     : Whether to overwrite an existing output file.
+
+    Returns:
+        A dictionary containing processing statistics.
+    """
+    if output_file.exists() and not overwrite:
+        raise FileExistsError(f"Output file '{output_file}' already exists. Use --overwrite to replace.")
+
+    check_write_permission(output_file)
+
+    if cores:
+        os.environ["POLARS_MAX_THREADS"] = str(cores)
+
+    click.secho(f"Calculating per-sample read length statistics from '{input_pattern}'...", fg="cyan", err=True)
+    
+    base_lf = pl.scan_parquet(input_pattern)
+    schema = base_lf.collect_schema()
+    
+    group_cols = ["t_id", "sample_id"]
+    if "year" in schema:
+        group_cols.append("year")
+    if "week" in schema:
+        group_cols.append("week")
+
+    # 1. Calculate weighted statistics
+    stats_lf = calculate_weighted_stats(
+        base_lf, 
+        metric_col="read_length", 
+        weight_col="read_count", 
+        group_col=group_cols, 
+        suffix="reads_sample_readlen"
+    ).join(
+        base_lf.group_by(group_cols).agg(pl.col("read_count").sum().alias("reads_sample_total_count")),
+        on=group_cols
+    )
+
+    df = stats_lf.collect(engine="streaming").sort(["t_id", "sample_id"])
+
+    # 2. Save and Metadata
+    click.secho(f"Saving per-sample results to {output_file.name}...", fg="cyan", err=True)
+    df.write_parquet(output_file, compression="zstd")
+
+    first_file = list(Path(input_pattern).parent.glob(Path(input_pattern).name))[0]
+    from sweetbits.metadata import read_companion_metadata
+    meta = read_companion_metadata(first_file) or {}
+    
+    out_meta = get_standard_metadata(
+        file_type="READ_LEN_FEATURE_LONG_PARQUET",
+        source_path=Path(input_pattern).parent,
+        compression="zstd",
+        sorting="t_id, sample_id",
+        data_standard=meta.get("data_standard", "GENERIC")
+    )
+    save_companion_metadata(output_file, out_meta)
+
+    return {
+        "records_processed": df.height,
+        "output_file": str(output_file)
     }
