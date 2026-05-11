@@ -39,14 +39,13 @@ This engine pools all k-mer classification data across any number of samples to 
 - **`kmers_global_exclade_count`**: Total k-mers hitting anything *outside* the target species clade.
 
 #### B. Evidence Ratios (`kmers_global_..._ratio`)
-These features provide proportions normalized by either **Classified** k-mers or **Total** k-mers using the `XVSY_ratio` format.
+These features provide proportions normalized by either **Classified** k-mers or **Total** k-mers using the `XVSY_ratio` format. All ratios are strictly bounded `[0, 1]` with null-safe handling for division-by-zero.
 
 **Relative to Classified K-mers:**
 - **`kmers_global_cladeVSclassified_ratio`**: Proportion of classified evidence that correctly hits the clade.
 - **`kmers_global_lineageVSclassified_ratio`**: Proportion of classified evidence hitting the lineage (high-level assignment).
 - **`kmers_global_misclassifiedVSclassified_ratio`**: Proportion of classified evidence hitting unrelated taxa.
 - **`kmers_global_rootVSclassified_ratio`**: Proportion of classified evidence at the root.
-- **`kmers_global_supportingVSmisclassified_ratio`**: Ratio of "Good" hits (Clade + Lineage) to "Bad" hits (Misclassified).
 
 **Relative to Total K-mers (Confidence Scores):**
 - **`kmers_global_cladeVStotal_ratio`**: The global Kraken 2 Confidence Score for this species.
@@ -75,7 +74,35 @@ These features provide proportions normalized by either **Classified** k-mers or
 
 ---
 
-### 3. Read Length Distribution Features (`reads_{global,sample}_...`)
+## 3. Per-Sample K-mer Evidence Features (`kmer-sample`)
+This engine generates a detailed temporal Parquet dataset containing classification features at a sample-by-sample resolution. This long-format table is essential for exploratory data analysis (EDA).
+
+#### Core Metrics
+- Calculates the same 8 absolute counts and 13 strictly bounded ratios as the global engine, but with the `kmers_sample_` prefix.
+- Calculates sample-specific taxonomic distance, depth, and relative LCA depth distributions (`mean`, `median`, `cv`, `p05`, `p95`).
+- Identifies the Top 3 competitor taxa (names, IDs, shares) per sample.
+
+*Note on Machine Learning:* The raw `kmers_sample` Parquet file should **not** be passed directly into a standard GBM (like XGBoost) if your model expects a single row per species. Furthermore, string/list features (Top 3 competitors) must be dropped before training to prevent crashes or extreme memory bloat.
+
+---
+
+## 4. Inter-Sample Stability Features (`kmer-stability`)
+This engine consumes the long-format output of `kmer-sample` to calculate variance metrics for each taxon. It provides the GBM with a critical signal to differentiate between stable biological presence and erratic false positives.
+
+#### A. Occupancy & Presence
+- **`kmers_stability_occupancy_ratio`**: The proportion of all project samples where this taxon appeared (Normalized [0, 1]).
+- **`kmers_stability_[RATIO]_presence`**: The proportion of samples where a specific ratio was mathematically calculable (e.g., proportion of samples where `classified_count > 0`).
+
+#### B. Stability Variance (`kmers_stability_[RATIO]_[STAT]`)
+For each of the 13 core classification quality ratios, this engine calculates 5 distributional stats across all samples where the ratio was valid:
+- `_mean`, `_median`, `_p05`, `_p95`.
+- **`_cv`**: The Coefficient of Variation. A high CV in a critical ratio (like `cladeVStotal_ratio`) is a massive red flag that the taxon's evidence profile is unstable, often indicating stochastic contamination or systemic resolution collisions.
+
+*Note:* To avoid mathematically invalid "means of means," stability metrics are **strictly restricted to proportions**. We do not calculate stability variance for raw counts or taxonomic distances.
+
+---
+
+### 5. Read Length Distribution Features (`reads_{global,sample}_...`)
 These features quantify the physical fragmentation of the DNA assigned to a taxon. Ancient or highly degraded DNA typically shows shorter mean lengths and specific distribution shapes.
 
 - **`reads_[scope]_total_count`**: Total reads analyzed.

@@ -216,6 +216,25 @@ Calculates globally aggregated k-mer classification quality features by pooling 
   - `--cores INT`: Number of CPU cores to use.
   - `--overwrite`: Overwrite output file if it exists.
 
+#### `produce feature kmer-sample`
+Calculates detailed k-mer classification quality features on a per-sample basis.
+- **Inputs:** Glob pattern for `<KMER_AGG_PARQUET>` files.
+- **Arguments:**
+  - `INPUT_PATTERN`: Glob pattern (e.g., `results/*.kmers.parquet`).
+  - `--taxonomy DIR`: JolTax cache directory.
+  - `--output FILE`: Path to output long-format Parquet file.
+  - `--cores INT`: Number of CPU cores to use.
+  - `--overwrite`: Overwrite output file if it exists.
+
+#### `produce feature kmer-stability`
+Consumes the long-format output of `kmer-sample` to calculate inter-sample variance metrics (e.g., CV) for each taxon.
+- **Inputs:** The long-format `<READ_LEN_FEATURE_LONG_PARQUET>` (or k-mer equivalent) Parquet file.
+- **Arguments:**
+  - `INPUT_PARQUET`: Path to the long-format Parquet.
+  - `--output FILE`: Path to summary output file (.csv, .tsv, .parquet).
+  - `--cores INT`: Number of CPU cores to use.
+  - `--overwrite`: Overwrite output file if it exists.
+
 #### `produce feature uniq-minimizer-corr`
 Validates taxonomic assignments by correlating observed unique minimizer coverage against a probabilistic model.
 - **Inputs:** `<REPORT_PARQUET>` (must be HYPERLOGLOG format).

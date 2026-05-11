@@ -33,7 +33,11 @@ sweetbits
 │   ├── table                  <- Generates abundance matrices
 │   └── feature
 │       ├── uniq-minimizer-corr <- Calculates validation metrics
-│       └── kmer-global         <- Calculates pooled k-mer quality features
+│       ├── kmer-global         <- Calculates pooled k-mer quality features
+│       ├── kmer-sample         <- Calculates per-sample k-mer quality features
+│       ├── kmer-stability      <- Calculates inter-sample stability metrics
+│       ├── read-lengths-global <- Calculates pooled read length features
+│       └── read-lengths-sample <- Calculates per-sample read length features
 │
 ├── annotate                   <- Amends tables with JolTax metadata
 └── inspect                    <- Prints Parquet metadata
@@ -58,6 +62,10 @@ SweetBITS provides several high-performance tools for processing Kraken 2 output
 - `produce feature kmer-global`: Calculates globally aggregated k-mer classification quality features by pooling data across any number of samples.
     - *Metrics:* Focuses on high-signal metrics like weighted mean taxonomic distance, LCA depth, and competitor identification.
     - *Global Totals:* Provides a "Global Total" evidence profile for every species in the dataset, allowing for robust GBM-based true/false positive detection.
+- `produce feature kmer-sample`: Generates a temporal, long-format Parquet dataset of k-mer evidence profiles with sample-level resolution.
+    - *Metrics:* Produces per-sample quality ratios, structural stats (distance, depth), and top 3 competitors per sample.
+- `produce feature kmer-stability`: Consumes the long-format output of `kmer-sample` to calculate inter-sample variance metrics (e.g., CV, percentiles) for core quality ratios.
+    - *Purpose:* Provides a critical signal for ML models to differentiate between stable biological presence and erratic, stochastic false positives. All ratios are strictly bounded `[0, 1]` with null-safe handling for division-by-zero.
 - `produce feature uniq-minimizer-corr`: Calculates species-level and clade-level validation metrics based on unique minimizer coverage.
     - *Validation Strategy:* Correlates observed unique minimizer coverage against a probabilistic expectation model. Taxa that fail to correlate across samples (e.g., Pearson R < 0.7) are likely false positives.
     - *Safety Limits:* Automatically applies a floor of $n \ge 6$ samples to ensure statistical stability.

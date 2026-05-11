@@ -150,6 +150,24 @@ sweetbits produce feature kmer-global "./kmer_aggregation/*.kmers.parquet" \
     --output kmers_global_features.csv
 ```
 
+### Per-Sample K-mer Features & Stability
+For temporal analysis and machine learning, you can extract long-format features and calculate inter-sample stability.
+
+#### Step 1: Extract Per-Sample Features
+```bash
+# Generate a temporal Parquet dataset of k-mer evidence
+sweetbits produce feature kmer-sample "./kmer_aggregation/*.kmers.parquet" \
+    --taxonomy /path/to/joltax_cache \
+    --output kmers_sample_features.parquet
+```
+
+#### Step 2: Calculate Stability Meta-Features
+```bash
+# Calculate variance and stability scores from the long-format output
+sweetbits produce feature kmer-stability kmers_sample_features.parquet \
+    --output kmers_stability_features.csv
+```
+
 ### Full Validation Workflow
 A typical SweetBITS workflow for creating a high-confidence abundance table:
 
