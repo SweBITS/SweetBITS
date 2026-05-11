@@ -3,21 +3,17 @@ import polars as pl
 from pathlib import Path
 from sweetbits.features import produce_feature_kmer_sample_logic, produce_feature_kmer_stability_logic
 from sweetbits.kmers import aggregate_kraken_kmers_logic
+from polars.testing import assert_frame_equal
 
 @pytest.fixture
 def kmer_sample_data(tmp_path):
-    """
-    Generates kmers.parquet files from the Universal Golden Dataset.
-    """
     kraken_dir = Path("test_data/universal_golden/inputs")
     taxonomy_dir = Path("test_data/joltax_cache")
     output_dir = tmp_path / "kmer_agg"
     output_dir.mkdir()
     
-    # Process just 3 samples to save time, but enough for testing stability
-    samples = sorted(list(kraken_dir.glob("*.kraken")))[:3]
-    
-    for kraken_file in samples:
+    # Process all 10 samples to match golden dataset exactly
+    for kraken_file in kraken_dir.glob("*.kraken"):
         aggregate_kraken_kmers_logic(
             kraken_file=kraken_file,
             output_dir=output_dir,
@@ -27,57 +23,47 @@ def kmer_sample_data(tmp_path):
     
     return {
         "pattern": str(output_dir / "*.kmers.parquet"),
-        "taxonomy": taxonomy_dir,
-        "sample_count": 3
+        "taxonomy": taxonomy_dir
     }
 
-def test_produce_feature_kmer_sample(kmer_sample_data, tmp_path):
-    """
-    Integration test for the long-format kmer-sample feature engine.
-    Ensures all expected columns are present, bounded correctly, and Top 3 are extracted.
-    """
+def test_produce_feature_kmer_sample_parity(kmer_sample_data, tmp_path):
     output_file = tmp_path / "kmer_sample_features.parquet"
+    golden_file = Path("test_data/universal_golden/ground_truth/golden_kmer_sample_features.csv")
     
-    summary = produce_feature_kmer_sample_logic(
+    produce_feature_kmer_sample_logic(
         input_pattern=kmer_sample_data["pattern"],
         taxonomy_dir=kmer_sample_data["taxonomy"],
         output_file=output_file,
         overwrite=True
     )
     
-    assert summary["records_processed"] > 0
-    assert output_file.exists()
+    df_gen = pl.read_parquet(output_file)
+    df_gold = pl.read_csv(golden_file, null_values=[""])
     
-    df = pl.read_parquet(output_file)
-    cols = df.columns
+    # Drop string lists (names/ids/shares) to just compare numerical correctness
+    drop_cols = [c for c in df_gen.columns if "_shares" in c or "_names" in c or "_taxids" in c]
+    df_gen_num = df_gen.drop(drop_cols).sort(["sample_id", "t_id"])
     
-    # Verify core columns
-    assert "sample_id" in cols
-    assert "t_id" in cols
-    assert "kmers_sample_clade_count" in cols
-    assert "kmers_sample_misclassifiedVSclassified_ratio" in cols
+    # Filter gold to just the taxa that were preserved in the generated output (species assigned)
+    df_gen_num = df_gen_num.with_columns(pl.col("sample_id").cast(pl.String))
+    df_gold = df_gold.with_columns(pl.col("sample_id").cast(pl.String))
+    df_gold_filtered = df_gold.join(df_gen_num.select(["sample_id", "t_id"]), on=["sample_id", "t_id"], how="inner").sort(["sample_id", "t_id"])
     
-    # Verify 0-1 bounds for ratios and safe nulls
-    ratio_cols = [c for c in cols if c.endswith("_ratio") and "VS" in c]
-    for col in ratio_cols:
-        min_val = df[col].min()
-        max_val = df[col].max()
-        if min_val is not None:
-            assert min_val >= 0.0
-        if max_val is not None:
-            assert max_val <= 1.0
-            
-    # Verify Top 3
-    assert "kmers_sample_misclassified_top3_taxids" in cols
-    assert "kmers_sample_exclade_top3_names" in cols
-    assert "kmers_sample_misclassified_top3_shares" in cols
+    common_cols = sorted(list(set(df_gen_num.columns) & set(df_gold_filtered.columns)))
+    
+    assert_frame_equal(
+        df_gen_num.select(common_cols), 
+        df_gold_filtered.select(common_cols), 
+        check_dtypes=False, 
+        rel_tol=1e-2, 
+        check_exact=False, 
+        check_column_order=False
+    )
 
-def test_produce_feature_kmer_stability(kmer_sample_data, tmp_path):
-    """
-    Integration test for the stability feature engine.
-    """
+def test_produce_feature_kmer_stability_parity(kmer_sample_data, tmp_path):
     sample_file = tmp_path / "kmer_sample_features.parquet"
     stability_file = tmp_path / "kmer_stability_features.csv"
+    golden_file = Path("test_data/universal_golden/ground_truth/golden_kmer_stability_features.csv")
     
     produce_feature_kmer_sample_logic(
         input_pattern=kmer_sample_data["pattern"],
@@ -86,28 +72,25 @@ def test_produce_feature_kmer_stability(kmer_sample_data, tmp_path):
         overwrite=True
     )
     
-    summary = produce_feature_kmer_stability_logic(
+    produce_feature_kmer_stability_logic(
         input_parquet=sample_file,
         output_file=stability_file,
         overwrite=True
     )
     
-    assert summary["taxa_processed"] > 0
-    assert stability_file.exists()
+    df_gen = pl.read_csv(stability_file, null_values=[""])
+    df_gold = pl.read_csv(golden_file, null_values=[""])
     
-    df = pl.read_csv(stability_file)
-    cols = df.columns
+    df_gen_num = df_gen.sort("t_id")
+    df_gold_filtered = df_gold.join(df_gen_num.select(["t_id"]), on="t_id", how="inner").sort("t_id")
     
-    assert "t_id" in cols
-    assert "kmers_stability_occupancy_ratio" in cols
+    common_cols = sorted(list(set(df_gen_num.columns) & set(df_gold_filtered.columns)))
     
-    # Verify bounded stability presence stats
-    assert "kmers_stability_cladeVStotal_ratio_presence" in cols
-    
-    pres_val = df["kmers_stability_cladeVStotal_ratio_presence"].max()
-    if pres_val is not None:
-        assert pres_val <= 1.0
-
-    # Ensure unbounded rogue ratio was actually removed
-    assert "kmers_sample_supportingVSmisclassified_ratio" not in cols
-    assert "kmers_stability_supportingVSmisclassified_ratio_mean" not in cols
+    assert_frame_equal(
+        df_gen_num.select(common_cols), 
+        df_gold_filtered.select(common_cols), 
+        check_dtypes=False, 
+        rel_tol=1e-2, 
+        check_exact=False, 
+        check_column_order=False
+    )

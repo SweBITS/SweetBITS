@@ -218,6 +218,212 @@ def main():
                     elif v is None: row_copy[k] = ""
                     else: row_copy[k] = v
                 writer.writerow(row_copy)
+
+    # 5. Extract Sample Ground Truth Features
+    print("Phase 5: Calculating sample ground truth features...")
+    sample_truth = []
+    
+    sample_species_map = {}
+    for r in all_reads:
+        if r["status"] == "U": continue
+        s_id = r["sample_id"]
+        tid = r["t_id"]
+        hit_tid, hit_count = r["kmer_str"].split(":")
+        hit_tid, hit_count = int(hit_tid), int(hit_count)
+        
+        if s_id not in sample_species_map: sample_species_map[s_id] = {}
+        if tid not in sample_species_map[s_id]: sample_species_map[s_id][tid] = {}
+        sample_species_map[s_id][tid][hit_tid] = sample_species_map[s_id][tid].get(hit_tid, 0) + hit_count
+
+    for s_id, taxa_hits in sample_species_map.items():
+        for s_tid, hits in taxa_hits.items():
+            s_meta = node_lookup[s_tid]
+            res = {
+                'sample_id': s_id,
+                't_id': s_tid, 
+                'kmers_sample_clade_count': 0, 
+                'kmers_sample_lineage_count': 0, 
+                'kmers_sample_misclassified_count': 0, 
+                'kmers_sample_root_count': 0, 
+                'kmers_sample_total_count': sum(hits.values())
+            }
+            dist_data, lineage_dist_data, misc_hits, exc_hits = [], [], {}, {}
+            for k_tid, count in hits.items():
+                if k_tid == 0: continue
+                k_meta = node_lookup[k_tid]; is_clade = is_descendant(k_tid, s_tid); is_lineage = is_descendant(s_tid, k_tid) and (k_tid != s_tid)
+                if is_clade: res['kmers_sample_clade_count'] += count
+                else:
+                    res['kmers_sample_exclade_count'] = res.get('kmers_sample_exclade_count', 0) + count; exc_hits[k_tid] = exc_hits.get(k_tid, 0) + count
+                    if is_lineage:
+                        res['kmers_sample_lineage_count'] += count; lineage_dist_data.append({'val': k_meta['depth'] / max(int(s_meta['depth']) - 1, 1), 'weight': count})
+                    else:
+                        res['kmers_sample_misclassified_count'] += count; misc_hits[k_tid] = misc_hits.get(k_tid, 0) + count
+                        lca_id = tree.get_lca(s_tid, k_tid); lca_meta = node_lookup[lca_id]
+                        dist = (int(s_meta['depth']) - int(lca_meta['depth'])) + (int(k_meta['depth']) - int(lca_meta['depth']))
+                        dist_data.append({'distance': dist, 'kmer_depth': k_meta['depth'], 'relative_lca_depth': lca_meta['depth'] / max(int(s_meta['depth']) - 1, 1), 'weight': count})
+                if k_tid == 1 and not is_clade: res['kmers_sample_root_count'] += count
+            
+            res['kmers_sample_classified_count'] = res['kmers_sample_clade_count'] + sum(exc_hits.values())
+            res['kmers_sample_unclassified_count'] = res['kmers_sample_total_count'] - res['kmers_sample_classified_count']
+            
+            c, d_class, d_tot, d_exc = res, res['kmers_sample_classified_count'], res['kmers_sample_total_count'], res.get('kmers_sample_exclade_count', 0)
+            
+            res.update({
+                'kmers_sample_cladeVSclassified_ratio': c['kmers_sample_clade_count'] / d_class if d_class > 0 else None, 
+                'kmers_sample_lineageVSclassified_ratio': c['kmers_sample_lineage_count'] / d_class if d_class > 0 else None, 
+                'kmers_sample_misclassifiedVSclassified_ratio': c['kmers_sample_misclassified_count'] / d_class if d_class > 0 else None, 
+                'kmers_sample_rootVSclassified_ratio': c['kmers_sample_root_count'] / d_class if d_class > 0 else None, 
+                
+                'kmers_sample_cladeVStotal_ratio': c['kmers_sample_clade_count'] / d_tot if d_tot > 0 else None, 
+                'kmers_sample_classifiedVStotal_ratio': c['kmers_sample_classified_count'] / d_tot if d_tot > 0 else None, 
+                'kmers_sample_lineageVStotal_ratio': c['kmers_sample_lineage_count'] / d_tot if d_tot > 0 else None, 
+                'kmers_sample_rootVStotal_ratio': c['kmers_sample_root_count'] / d_tot if d_tot > 0 else None, 
+                'kmers_sample_misclassifiedVStotal_ratio': c['kmers_sample_misclassified_count'] / d_tot if d_tot > 0 else None, 
+                'kmers_sample_excladeVStotal_ratio': c.get('kmers_sample_exclade_count', 0) / d_tot if d_tot > 0 else None, 
+                'kmers_sample_supportingVStotal_ratio': (c['kmers_sample_clade_count'] + c['kmers_sample_lineage_count']) / d_tot if d_tot > 0 else None,
+                
+                'kmers_sample_rootVSexclade_ratio': c['kmers_sample_root_count'] / d_exc if d_exc > 0 else None, 
+                'kmers_sample_lineageVSexclade_ratio': c['kmers_sample_lineage_count'] / d_exc if d_exc > 0 else None,
+            })
+            
+            for m in ['dist', 'depth', 'relative_lca_depth']:
+                map_m = {'dist': 'distance', 'depth': 'kmer_depth', 'relative_lca_depth': 'relative_lca_depth'}
+                v_col = map_m[m]
+                s = get_weighted_stats([{'v': x[v_col], 'w': x['weight']} for x in dist_data], 'v', 'w')
+                res.update({
+                    f'kmers_sample_misclassified_{m}_mean': s['mean'], 
+                    f'kmers_sample_misclassified_{m}_median': s['median'], 
+                    f'kmers_sample_misclassified_{m}_cv': s['cv'], 
+                    f'kmers_sample_misclassified_{m}_p05': s['p05'], 
+                    f'kmers_sample_misclassified_{m}_p95': s['p95']
+                })
+                
+            lin_res = get_weighted_stats(lineage_dist_data, 'val', 'weight')
+            res.update({
+                'kmers_sample_lineage_relative_depth_mean': lin_res['mean'], 
+                'kmers_sample_lineage_relative_depth_median': lin_res['median'], 
+                'kmers_sample_lineage_relative_depth_cv': lin_res['cv'], 
+                'kmers_sample_lineage_relative_depth_p05': lin_res['p05'], 
+                'kmers_sample_lineage_relative_depth_p95': lin_res['p95']
+            })
+            
+            def fmt_top(h_dict, total_sum):
+                sorted_h = sorted(h_dict.items(), key=lambda x: (x[1], -x[0]), reverse=True)[:3]
+                shares = [round(c / total_sum, 4) for _, c in sorted_h]
+                shares_str = ";".join([str(x) if x != int(x) else str(int(x)) for x in shares])
+                return ";".join([str(k) for k, _ in sorted_h]), ";".join([tree.get_name(k) or "Unknown" for k, _ in sorted_h]), shares_str
+            
+            res['kmers_sample_misclassified_top3_taxids'], res['kmers_sample_misclassified_top3_names'], res['kmers_sample_misclassified_top3_shares'] = fmt_top(misc_hits, max(c['kmers_sample_misclassified_count'], 1))
+            res['kmers_sample_exclade_top3_taxids'], res['kmers_sample_exclade_top3_names'], res['kmers_sample_exclade_top3_shares'] = fmt_top(exc_hits, max(c.get('kmers_sample_exclade_count', 0), 1))
+            
+            sample_truth.append(res)
+            
+    sample_truth.sort(key=lambda x: (x['sample_id'], x['t_id']))
+    if sample_truth:
+        all_keys = set()
+        for r in sample_truth: all_keys.update(r.keys())
+        headers = sorted(list(all_keys))
+        with open(truth_dir / "golden_kmer_sample_features.csv", "w", newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=headers); writer.writeheader()
+            for r in sample_truth:
+                row_copy = {h: "" for h in headers}
+                for k, v in r.items():
+                    if isinstance(v, float) and not math.isnan(v): row_copy[k] = f"{v:.6f}"
+                    elif v is None: row_copy[k] = ""
+                    else: row_copy[k] = v
+                writer.writerow(row_copy)
+
+    # 6. Extract Stability Ground Truth Features
+    print("Phase 6: Calculating stability ground truth features...")
+    stability_truth = []
+    
+    TARGET_RATIOS = [
+        "kmers_sample_cladeVSclassified_ratio",
+        "kmers_sample_lineageVSclassified_ratio",
+        "kmers_sample_misclassifiedVSclassified_ratio",
+        "kmers_sample_rootVSclassified_ratio",
+        "kmers_sample_cladeVStotal_ratio",
+        "kmers_sample_classifiedVStotal_ratio",
+        "kmers_sample_lineageVStotal_ratio",
+        "kmers_sample_rootVStotal_ratio",
+        "kmers_sample_misclassifiedVStotal_ratio",
+        "kmers_sample_excladeVStotal_ratio",
+        "kmers_sample_supportingVStotal_ratio",
+        "kmers_sample_rootVSexclade_ratio",
+        "kmers_sample_lineageVSexclade_ratio"
+    ]
+    
+    total_samples = len(SAMPLES)
+    
+    taxon_sample_metrics = {}
+    for r in sample_truth:
+        tid = r['t_id']
+        if tid not in taxon_sample_metrics:
+            taxon_sample_metrics[tid] = {ratio: [] for ratio in TARGET_RATIOS}
+            taxon_sample_metrics[tid]['samples'] = []
+        taxon_sample_metrics[tid]['samples'].append(r['sample_id'])
+        for ratio in TARGET_RATIOS:
+            val = r.get(ratio)
+            if val is not None:
+                taxon_sample_metrics[tid][ratio].append(val)
+                
+    for tid, data in taxon_sample_metrics.items():
+        res = {
+            't_id': tid,
+            'kmers_stability_occupancy_ratio': len(data['samples']) / total_samples
+        }
+        
+        for ratio in TARGET_RATIOS:
+            base_name = ratio.replace("kmers_sample_", "kmers_stability_")
+            vals = data[ratio]
+            valid_n = len(vals)
+            
+            res[f'{base_name}_presence'] = valid_n / len(data['samples']) if len(data['samples']) > 0 else 0.0
+            
+            if valid_n > 0:
+                s_vals = sorted(vals)
+                mean_val = sum(s_vals) / valid_n
+                
+                p05 = np.percentile(s_vals, 5, method='nearest') if valid_n > 0 else None
+                median = np.median(s_vals) if valid_n > 0 else None
+                p95 = np.percentile(s_vals, 95, method='nearest') if valid_n > 0 else None
+                
+                res[f'{base_name}_mean'] = mean_val
+                res[f'{base_name}_median'] = float(median)
+                res[f'{base_name}_p05'] = float(p05)
+                res[f'{base_name}_p95'] = float(p95)
+                
+                if valid_n > 1:
+                    var = sum((x - mean_val) ** 2 for x in s_vals) / (valid_n - 1)
+                    stdev = math.sqrt(var)
+                else:
+                    stdev = None
+                    
+                res[f'{base_name}_cv'] = (stdev / mean_val) if stdev is not None and mean_val != 0 else None
+            else:
+                res[f'{base_name}_mean'] = None
+                res[f'{base_name}_median'] = None
+                res[f'{base_name}_p05'] = None
+                res[f'{base_name}_p95'] = None
+                res[f'{base_name}_cv'] = None
+                
+        stability_truth.append(res)
+        
+    stability_truth.sort(key=lambda x: x['t_id'])
+    if stability_truth:
+        all_keys = set()
+        for r in stability_truth: all_keys.update(r.keys())
+        headers = sorted(list(all_keys))
+        with open(truth_dir / "golden_kmer_stability_features.csv", "w", newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=headers); writer.writeheader()
+            for r in stability_truth:
+                row_copy = {h: "" for h in headers}
+                for k, v in r.items():
+                    if isinstance(v, float) and not math.isnan(v): row_copy[k] = f"{v:.6f}"
+                    elif v is None: row_copy[k] = ""
+                    else: row_copy[k] = v
+                writer.writerow(row_copy)
+
     print(f"Universal Golden Dataset built successfully in {base_dir}")
 
 if __name__ == "__main__":
