@@ -1253,3 +1253,97 @@ def collect_feature_chunks_logic(
         "total_records": final_df.height,
         "output_file": str(output_file)
     }
+
+
+def produce_feature_abundance_logic(
+    input_table: Path,
+    output_file: Path,
+    cores: Optional[int] = None,
+    overwrite: bool = False
+) -> Dict[str, Any]:
+    """
+    Calculates global abundance features (mean, median, p05, p95, CV) for every taxon.
+
+    This engine consumes a wide-format abundance table (e.g., CLR-transformed or 
+    proportions) and calculates row-wise statistical summaries across all samples.
+    It supports multiple input formats (CSV, TSV, Parquet) and automatically 
+    identifies sample columns by excluding the 't_id' index.
+
+    Args:
+        input_table : Path to the wide-format abundance table.
+        output_file : Path to save the resulting feature table (.csv, .tsv, .parquet).
+        cores       : Number of threads to dedicate to Polars.
+        overwrite   : Whether to overwrite an existing output file.
+
+    Returns:
+        A dictionary containing processing statistics.
+    """
+    if output_file.exists() and not overwrite:
+        raise FileExistsError(f"Output file '{output_file}' already exists. Use --overwrite to replace.")
+
+    check_write_permission(output_file)
+
+    if cores:
+        os.environ["POLARS_MAX_THREADS"] = str(cores)
+
+    click.secho(f"Loading abundance table from '{input_table.name}'...", fg="cyan", err=True)
+
+    # 1. Load table
+    ext_in = input_table.suffix.lower()
+    if ext_in == ".parquet":
+        lf = pl.scan_parquet(input_table)
+    elif ext_in == ".tsv" or input_table.name.endswith(".tsv.gz"):
+        lf = pl.scan_csv(input_table, separator="\t")
+    else:
+        lf = pl.scan_csv(input_table)
+
+    # 2. Identify sample columns
+    schema = lf.collect_schema()
+    sample_cols = [c for c in schema.names() if c != "t_id"]
+
+    if not sample_cols:
+        raise ValueError("The input table must contain at least one sample column in addition to 't_id'.")
+
+    click.secho(f"Calculating abundance statistics across {len(sample_cols)} samples...", fg="cyan", err=True)
+
+    # 3. Calculate statistics
+    # We unpivot to long format to use standard group_by aggregations which are more robust in Polars
+    # than row-wise expressions for quantiles.
+    long_lf = lf.unpivot(index="t_id", variable_name="sample_id", value_name="abundance")
+
+    # We use 'nearest' for quantiles to match numpy's default behavior used in the golden truth generator
+    stats_lf = long_lf.group_by("t_id").agg([
+        pl.col("abundance").mean().alias("abundance_global_mean"),
+        pl.col("abundance").median().alias("abundance_global_median"),
+        pl.col("abundance").quantile(0.05, interpolation="nearest").alias("abundance_global_p05"),
+        pl.col("abundance").quantile(0.95, interpolation="nearest").alias("abundance_global_p95"),
+        (pl.col("abundance").std() / pl.col("abundance").mean()).alias("abundance_global_cv")
+    ]).sort("t_id")
+
+    df = stats_lf.collect()
+
+    # 4. Save
+    click.secho(f"Saving abundance features to {output_file.name}...", fg="cyan", err=True)
+    ext_out = output_file.suffix.lower()
+    if ext_out == ".parquet":
+        df.write_parquet(output_file, compression="zstd")
+    elif ext_out == ".tsv":
+        df.write_csv(output_file, separator="\t", quote_style="non_numeric")
+    else:
+        df.write_csv(output_file, quote_style="non_numeric")
+
+    # 5. Metadata
+    out_meta = get_standard_metadata(
+        file_type="FEATURE_TABLE",
+        source_path=input_table,
+        compression="zstd" if ext_out == ".parquet" else "None",
+        sorting="t_id",
+        data_standard="MIXED"
+    )
+    save_companion_metadata(output_file, out_meta)
+
+    return {
+        "taxa_processed": df.height,
+        "sample_count": len(sample_cols),
+        "output_file": str(output_file)
+    }

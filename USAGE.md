@@ -168,6 +168,13 @@ sweetbits produce feature kmer-stability kmers_sample_features.parquet \
     --output kmers_stability_features.csv
 ```
 
+### Abundance Features
+If you have a wide-format abundance table (e.g., from CLR transformation) and want to calculate global distribution features:
+```bash
+sweetbits produce feature abundance clr_table.parquet \
+    --output abundance_features.csv
+```
+
 ### Scalable "Divide and Conquer" Workflow
 For massive datasets (500+ samples), processing all k-mer features in a single pass may exceed workstation RAM. In these cases, use the chunked workflow:
 

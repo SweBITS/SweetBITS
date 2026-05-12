@@ -266,6 +266,15 @@ Calculates per-sample read length features for every taxon detected in each samp
   - `--cores INT`: Number of CPU cores to use.
   - `--overwrite`: Overwrite output file if it exists.
 
+#### `produce feature abundance`
+Calculates global abundance features (mean, median, CV, p05, p95) from a wide-format table.
+- **Inputs:** Wide-format abundance table (Parquet, CSV, TSV).
+- **Arguments:**
+  - `INPUT_TABLE`: Path to the abundance table (e.g., CLR-transformed).
+  - `--output FILE`: Path to output summary file.
+  - `--cores INT`: Number of CPU cores to use.
+  - `--overwrite`: Overwrite output file if it exists.
+
 #### `produce reads`
 Streams `<KRAKEN_PARQUET>` to extract reads into FASTQ format with high throughput and a constant memory profile.
 - **Inputs:** `<KRAKEN_PARQUET>` file or directory.

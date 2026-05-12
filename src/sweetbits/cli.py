@@ -341,6 +341,38 @@ def produce_feature_read_lengths_sample(input_pattern, output, cores, overwrite)
         click.secho(f"Error: {str(e)}", fg="red", err=True)
         sys.exit(1)
 
+
+@feature.command(name="abundance", short_help="Calculate global abundance features (Mean, Median, CV) from a table.")
+@click.argument("input_table", type=click.Path(exists=True, path_type=Path))
+@click.option("--output", "-o", required=True, type=click.Path(path_type=Path), help="Path to output summary file.")
+@click.option("--cores", type=int, help="Number of CPU cores to use (Default: all available).")
+@click.option("--overwrite", is_flag=True, help="Overwrite output file if it exists.")
+def produce_feature_abundance(input_table, output, cores, overwrite):
+    """
+    Calculates global abundance features (mean, median, p05, p95, CV) for every taxon.
+    Consumes a wide-format abundance table (e.g., CLR-transformed).
+    """
+    start_time = time.time()
+    ctx = click.get_current_context()
+    print_splash()
+    print_invocation_info()
+    print_parameters(ctx.params)
+
+    try:
+        from sweetbits.features import produce_feature_abundance_logic
+        summary = produce_feature_abundance_logic(
+            input_table=input_table,
+            output_file=output,
+            cores=cores,
+            overwrite=overwrite
+        )
+        summary["status"] = "Success"
+        print_footer(start_time, summary)
+    except Exception as e:
+        click.secho(f"Error: {str(e)}", fg="red", err=True)
+        sys.exit(1)
+
+
 @kraken.command(name="reports", short_help="Merge Kraken reports into a single Parquet file (<REPORTS_PARQUET>).")
 @click.argument("directory", type=click.Path(exists=True, path_type=Path))
 @click.option("--output", "-o", type=click.Path(path_type=Path), required=True, help="Path to output Parquet file.")

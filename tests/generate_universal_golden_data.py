@@ -437,6 +437,77 @@ def main():
                     else: row_copy[k] = v
                 writer.writerow(row_copy)
 
+    # 7. Extract Abundance Ground Truth Features
+    print("Phase 7: Calculating abundance ground truth features...")
+    
+    # First, we need a mock abundance table. 
+    # We'll use the clade_reads counts from the reports as a base, then CLR-transform them.
+    # Actually, the user said it could be proportions too. Let's use simple proportions
+    # to avoid complex zero-replacement logic in the mock generator.
+    
+    # 7.1 Calculate proportions
+    sample_totals = {}
+    for r in all_reads:
+        sid = r["sample_id"]
+        sample_totals[sid] = sample_totals.get(sid, 0) + 1
+        
+    abundance_data = {} # {tid: {sid: proportion}}
+    for r in all_reads:
+        if r["status"] == "U": continue
+        tid = r["t_id"]
+        sid = r["sample_id"]
+        if tid not in abundance_data: abundance_data[tid] = {}
+        abundance_data[tid][sid] = abundance_data[tid].get(sid, 0) + (1.0 / sample_totals[sid])
+        
+    all_tids_in_abundance = sorted(list(abundance_data.keys()))
+    all_sids = [s["id"] for s in SAMPLES]
+    
+    # Write mock abundance table
+    with open(input_dir / "golden_abundance_table.csv", "w", newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(["t_id"] + all_sids)
+        for tid in all_tids_in_abundance:
+            row = [tid]
+            for sid in all_sids:
+                row.append(f"{abundance_data[tid].get(sid, 0.0):.8f}")
+            writer.writerow(row)
+            
+    # 7.2 Calculate stats
+    abundance_truth = []
+    for tid in all_tids_in_abundance:
+        vals = [abundance_data[tid].get(sid, 0.0) for sid in all_sids]
+        s_vals = sorted(vals)
+        n = len(s_vals)
+        mean_val = sum(s_vals) / n
+        median = np.median(s_vals)
+        p05 = np.percentile(s_vals, 5, method='nearest')
+        p95 = np.percentile(s_vals, 95, method='nearest')
+        
+        var = sum((x - mean_val) ** 2 for x in s_vals) / (n - 1) if n > 1 else 0.0
+        stdev = math.sqrt(var)
+        cv = (stdev / mean_val) if mean_val != 0 else 0.0
+        
+        abundance_truth.append({
+            't_id': tid,
+            'abundance_global_mean': mean_val,
+            'abundance_global_median': float(median),
+            'abundance_global_p05': float(p05),
+            'abundance_global_p95': float(p95),
+            'abundance_global_cv': cv
+        })
+        
+    if abundance_truth:
+        headers = ['t_id', 'abundance_global_mean', 'abundance_global_median', 'abundance_global_p05', 'abundance_global_p95', 'abundance_global_cv']
+        with open(truth_dir / "golden_abundance_features.csv", "w", newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=headers); writer.writeheader()
+            for r in abundance_truth:
+                row_copy = {}
+                for k, v in r.items():
+                    if k == 't_id': row_copy[k] = v
+                    elif isinstance(v, float): row_copy[k] = f"{v:.6f}"
+                    else: row_copy[k] = v
+                writer.writerow(row_copy)
+
     print(f"Universal Golden Dataset built successfully in {base_dir}")
 
 if __name__ == "__main__":
