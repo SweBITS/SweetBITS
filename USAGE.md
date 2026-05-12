@@ -168,6 +168,27 @@ sweetbits produce feature kmer-stability kmers_sample_features.parquet \
     --output kmers_stability_features.csv
 ```
 
+### Scalable "Divide and Conquer" Workflow
+For massive datasets (500+ samples), processing all k-mer features in a single pass may exceed workstation RAM. In these cases, use the chunked workflow:
+
+#### Phase 1: Generate Intermediate Chunks
+Run `kmer-sample` on individual files (easily parallelizable in Snakemake):
+```bash
+sweetbits produce feature kmer-sample sample_001.kmers.parquet \
+    --taxonomy /path/to/joltax_cache \
+    --output sample_001.chunk.parquet
+```
+
+#### Phase 2: Merge Chunks
+Use the high-speed collection tool to unify the temporal dataset:
+```bash
+sweetbits collect feature-chunks "./chunks/*.chunk.parquet" \
+    --output sample_kmer_features.parquet
+```
+
+#### Phase 3: Calculate Stability
+Run the stability engine on the merged file as normal.
+
 ### Full Validation Workflow
 A typical SweetBITS workflow for creating a high-confidence abundance table:
 

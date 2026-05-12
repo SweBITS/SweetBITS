@@ -82,6 +82,8 @@ This engine generates a detailed temporal Parquet dataset containing classificat
 - Calculates sample-specific taxonomic distance, depth, and relative LCA depth distributions (`mean`, `median`, `cv`, `p05`, `p95`).
 - Identifies the Top 3 competitor taxa (names, IDs, shares) per sample.
 
+**Scalability (Divide and Conquer):** For large datasets, this engine supports a chunked workflow. Individual samples can be processed into intermediate Parquet "chunks" and subsequently unified using the `sweetbits collect feature-chunks` command. This ensures constant memory usage regardless of project size.
+
 *Note on Machine Learning:* The raw `kmers_sample` Parquet file should **not** be passed directly into a standard GBM (like XGBoost) if your model expects a single row per species. Furthermore, string/list features (Top 3 competitors) must be dropped before training to prevent crashes or extreme memory bloat.
 
 ---

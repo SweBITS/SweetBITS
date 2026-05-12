@@ -23,7 +23,7 @@ from scipy.stats import t
 from joltax import JolTree
 from sweetbits.taxmath import calc_clade_sum
 from sweetbits.utils import UNCLASSIFIED_TID, FILTERED_TID, load_sample_id_list, check_write_permission
-from sweetbits.metadata import validate_sweetbits_file, get_standard_metadata, save_companion_metadata
+from sweetbits.metadata import validate_sweetbits_file, get_standard_metadata, save_companion_metadata, read_companion_metadata
 
 # Parameters for the Minimizer Correlation engine
 CORR_TOP_PERCENT_FILTER = 1.0  # Percentage of top coverage samples to remove for filtered correlation
@@ -843,73 +843,6 @@ def produce_feature_read_lengths_sample_logic(
         "records_processed": df.height,
         "output_file": str(output_file)
     }
-import polars as pl
-import numpy as np
-import click
-import os
-from pathlib import Path
-from typing import Dict, Any, Optional
-from joltax import JolTree
-from sweetbits.utils import check_write_permission
-from sweetbits.metadata import get_standard_metadata, save_companion_metadata, read_companion_metadata
-
-def calculate_weighted_stats(
-    lf: pl.LazyFrame, 
-    metric_col: str, 
-    weight_col: str, 
-    group_col: Any,
-    suffix: str
-) -> pl.LazyFrame:
-    """
-    Calculates a suite of weighted distributional statistics for a given metric.
-    (This is identical to the one in features.py, just redefined here for simplicity if needed,
-     but we'll import it from features in the final merge).
-    """
-    mean_lf = lf.group_by(group_col).agg(
-        ((pl.col(metric_col).cast(pl.Float64) * pl.col(weight_col)).sum() / pl.col(weight_col).sum()).alias(f"{suffix}_mean")
-    )
-
-    quantiles_lf = (
-        lf.sort(metric_col)
-        .group_by(group_col)
-        .agg([
-            pl.col(metric_col).gather(
-                pl.col(weight_col).cum_sum().search_sorted(pl.col(weight_col).sum() * 0.05)
-            ).first().alias(f"{suffix}_p05"),
-            pl.col(metric_col).gather(
-                pl.col(weight_col).cum_sum().search_sorted(pl.col(weight_col).sum() * 0.50)
-            ).first().alias(f"{suffix}_median"),
-            pl.col(metric_col).gather(
-                pl.col(weight_col).cum_sum().search_sorted(pl.col(weight_col).sum() * 0.95)
-            ).first().alias(f"{suffix}_p95")
-        ])
-    )
-
-    stdev_cv_lf = (
-        lf.join(mean_lf, on=group_col)
-        .group_by(group_col)
-        .agg([
-            (
-                pl.when(pl.col(weight_col).sum() > 1)
-                .then(
-                    ((pl.col(weight_col) * (pl.col(metric_col) - pl.col(f"{suffix}_mean")).pow(2)).sum() /
-                    (pl.col(weight_col).sum() - 1)).sqrt()
-                )
-                .otherwise(None)
-            ).alias("stdev"),
-            pl.col(f"{suffix}_mean").first().alias("mean")
-        ])
-        .with_columns(
-            pl.when(pl.col("mean") != 0)
-            .then(pl.col("stdev") / pl.col("mean"))
-            .otherwise(None)
-            .alias(f"{suffix}_cv")
-        )
-        .drop(["stdev", "mean"])
-    )
-
-    return mean_lf.join(quantiles_lf, on=group_col).join(stdev_cv_lf, on=group_col)
-
 def produce_feature_kmer_sample_logic(
     input_pattern: str,
     taxonomy_dir: Path,
