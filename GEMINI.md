@@ -227,7 +227,7 @@ Calculates detailed k-mer classification quality features on a per-sample basis.
   - `--overwrite`: Overwrite output file if it exists.
 
 #### `produce feature kmer-stability`
-Consumes the long-format output of `kmer-sample` to calculate inter-sample variance metrics (e.g., CV) for each taxon.
+Consumes the long-format output of `kmer-sample` to calculate inter-sample variance metrics (e.g., StDev, percentiles) for each taxon.
 - **Inputs:** The long-format `<READ_LEN_FEATURE_LONG_PARQUET>` (or k-mer equivalent) Parquet file.
 - **Arguments:**
   - `INPUT_PARQUET`: Path to the long-format Parquet.

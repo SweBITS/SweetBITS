@@ -85,9 +85,17 @@ def test_produce_feature_kmer_stability_parity(kmer_sample_data, tmp_path):
     
     assert df_gen.height == df_gold.height, "Row counts differ between generated and golden stability features."
     
+    # Check new column structure
+    assert "kmers_stability_occupancy_ratio" in df_gen.columns
+    assert any("_stdev" in c for c in df_gen.columns)
+    assert any("_cv" in c for c in df_gen.columns)
+    assert not any("_presence" in c for c in df_gen.columns if c != "kmers_stability_occupancy_ratio")
+
     df_gen_num = df_gen.sort("t_id")
     df_gold_filtered = df_gold.join(df_gen_num.select(["t_id"]), on="t_id", how="inner").sort("t_id")
     
+    # Map gen columns back to gold names if they differ but match in content
+    # (e.g. mean, median, p05, p95 should match)
     common_cols = sorted(list(set(df_gen_num.columns) & set(df_gold_filtered.columns)))
     
     assert_frame_equal(

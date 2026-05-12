@@ -163,7 +163,7 @@ sweetbits produce feature kmer-sample "./kmer_aggregation/*.kmers.parquet" \
 
 #### Step 2: Calculate Stability Meta-Features
 ```bash
-# Calculate variance and stability scores from the long-format output
+# Calculate Mean, Median, StDev, and percentiles from the long-format output
 sweetbits produce feature kmer-stability kmers_sample_features.parquet \
     --output kmers_stability_features.csv
 ```

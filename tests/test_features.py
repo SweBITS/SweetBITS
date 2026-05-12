@@ -55,7 +55,7 @@ def test_minimizer_correlations_golden_dataset(golden_data, tmp_path):
     # Standard columns should exist
     expected_cols = [
         "t_id", "mm_pearson_corr", "mm_pearson_p", "mm_pearson_n",
-        "mm_obs_cov_mean", "mm_obs_cov_median", "mm_obs_cov_cv",
+        "mm_obs_cov_mean", "mm_obs_cov_median", "mm_obs_cov_stdev", "mm_obs_cov_cv",
         "mm_obs_cov_p05", "mm_obs_cov_p95"
     ]
     for col in expected_cols:

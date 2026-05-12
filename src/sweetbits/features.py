@@ -111,19 +111,30 @@ def calculate_weighted_stats(
                     (pl.col(weight_col).sum() - 1)).sqrt()
                 )
                 .otherwise(None)
-            ).alias("stdev"),
+            ).alias(f"{suffix}_stdev"),
             pl.col(f"{suffix}_mean").first().alias("mean")
         ])
         .with_columns(
             pl.when(pl.col("mean") != 0)
-            .then(pl.col("stdev") / pl.col("mean"))
+            .then(pl.col(f"{suffix}_stdev") / pl.col("mean"))
             .otherwise(None)
             .alias(f"{suffix}_cv")
         )
-        .drop(["stdev", "mean"])
+        .drop("mean")
     )
 
-    return mean_lf.join(quantiles_lf, on=group_col).join(stdev_cv_lf, on=group_col)
+    res_lf = mean_lf.join(quantiles_lf, on=group_col).join(stdev_cv_lf, on=group_col)
+
+    # Standardize column order
+    return res_lf.select([
+        *([group_col] if isinstance(group_col, str) else group_col),
+        f"{suffix}_mean",
+        f"{suffix}_median",
+        f"{suffix}_stdev",
+        f"{suffix}_cv",
+        f"{suffix}_p05",
+        f"{suffix}_p95"
+    ])
 
 def produce_feature_kmer_global_logic(
     input_pattern: str,
@@ -347,6 +358,32 @@ def produce_feature_kmer_global_logic(
     # 7. Final Join & Save
     click.secho(f"Merging all features into {output_file.name}...", fg="cyan", err=True)
     
+    # We maintain a strictly ordered schema for readability
+    counts_cols = [
+        "kmers_global_total_count",
+        "kmers_global_classified_count",
+        "kmers_global_unclassified_count",
+        "kmers_global_clade_count",
+        "kmers_global_exclade_count",
+        "kmers_global_lineage_count",
+        "kmers_global_root_count"
+    ]
+    ratio_cols = [
+        "kmers_global_cladeVSclassified_ratio",
+        "kmers_global_lineageVSclassified_ratio",
+        "kmers_global_misclassifiedVSclassified_ratio",
+        "kmers_global_rootVSclassified_ratio",
+        "kmers_global_cladeVStotal_ratio",
+        "kmers_global_classifiedVStotal_ratio",
+        "kmers_global_lineageVStotal_ratio",
+        "kmers_global_rootVStotal_ratio",
+        "kmers_global_misclassifiedVStotal_ratio",
+        "kmers_global_excladeVStotal_ratio",
+        "kmers_global_supportingVStotal_ratio",
+        "kmers_global_rootVSexclade_ratio",
+        "kmers_global_lineageVSexclade_ratio"
+    ]
+    
     final_df = (
         counts_lf.collect()
         .join(dist_stats.collect(), on="t_id", how="left")
@@ -354,8 +391,22 @@ def produce_feature_kmer_global_logic(
         .join(lca_stats.collect(), on="t_id", how="left")
         .join(lineage_stats.collect(), on="t_id", how="left")
         .join(top_hits, on="t_id", how="left")
-        .sort("t_id")
     )
+
+    # Get structural stat columns from the joined frames (they are already ordered by calculate_weighted_stats)
+    struct_cols = []
+    for suffix in ["kmers_global_misclassified_dist", "kmers_global_misclassified_depth", "kmers_global_misclassified_relative_lca_depth", "kmers_global_lineage_relative_depth"]:
+        struct_cols.extend([f"{suffix}_{m}" for f in [suffix] for m in ["mean", "median", "stdev", "cv", "p05", "p95"]])
+
+    top_cols = [c for c in top_hits.columns if c != "t_id"]
+
+    final_df = final_df.select([
+        "t_id",
+        *counts_cols,
+        *ratio_cols,
+        *struct_cols,
+        *top_cols
+    ]).sort("t_id")
 
     # Convert list columns to character-delimited strings.
     # Non-numeric columns are explicitly quoted for parsing safety in downstream tools.
@@ -532,9 +583,10 @@ def generate_minimizer_correlations(
 
             x.mean().alias("mm_obs_cov_mean"),
             x.median().alias("mm_obs_cov_median"),
-            (x.std() / x.mean()).alias("mm_obs_cov_cv"),
-            x.quantile(0.05).alias("mm_obs_cov_p05"),
-            x.quantile(0.95).alias("mm_obs_cov_p95")
+            x.std().alias("mm_obs_cov_stdev"),
+            pl.when(x.mean() != 0).then(x.std() / x.mean()).otherwise(None).alias("mm_obs_cov_cv"),
+            x.quantile(0.05, interpolation="nearest").alias("mm_obs_cov_p05"),
+            x.quantile(0.95, interpolation="nearest").alias("mm_obs_cov_p95")
         ])
         .with_columns([
             pl.struct(["_t_stat", "mm_pearson_n"]).map_elements(
@@ -548,6 +600,21 @@ def generate_minimizer_correlations(
             ).alias("mm_pearson_filtered_p")
         ])
         .drop(["_t_stat", "_t_stat_f"])
+        .select([
+            "t_id",
+            "mm_pearson_corr",
+            "mm_pearson_p",
+            "mm_pearson_n",
+            "mm_pearson_filtered_corr",
+            "mm_pearson_filtered_p",
+            "mm_pearson_filtered_n",
+            "mm_obs_cov_mean",
+            "mm_obs_cov_median",
+            "mm_obs_cov_stdev",
+            "mm_obs_cov_cv",
+            "mm_obs_cov_p05",
+            "mm_obs_cov_p95"
+        ])
         .sort("t_id")
         .collect()
     )
@@ -735,7 +802,17 @@ def produce_feature_read_lengths_global_logic(
         suffix="reads_global_readlen"
     ).join(totals_lf, on="t_id")
 
-    df = stats_lf.collect(engine="streaming").sort("t_id")
+    # Standardize column order
+    df = stats_lf.select([
+        "t_id",
+        "reads_global_total_count",
+        "reads_global_readlen_mean",
+        "reads_global_readlen_median",
+        "reads_global_readlen_stdev",
+        "reads_global_readlen_cv",
+        "reads_global_readlen_p05",
+        "reads_global_readlen_p95"
+    ]).collect(engine="streaming").sort("t_id")
 
     # 4. Save and Metadata
     click.secho(f"Saving global results to {output_file.name}...", fg="cyan", err=True)
@@ -820,7 +897,17 @@ def produce_feature_read_lengths_sample_logic(
         on=group_cols
     )
 
-    df = stats_lf.collect(engine="streaming").sort(["t_id", "sample_id"])
+    # Standardize column order
+    df = stats_lf.select([
+        *group_cols,
+        "reads_sample_total_count",
+        "reads_sample_readlen_mean",
+        "reads_sample_readlen_median",
+        "reads_sample_readlen_stdev",
+        "reads_sample_readlen_cv",
+        "reads_sample_readlen_p05",
+        "reads_sample_readlen_p95"
+    ]).collect(engine="streaming").sort(["t_id", "sample_id"])
 
     # 2. Save and Metadata
     click.secho(f"Saving per-sample results to {output_file.name}...", fg="cyan", err=True)
@@ -1035,6 +1122,32 @@ def produce_feature_kmer_sample_logic(
     # 7. Final Join & Save
     click.secho(f"Merging all features into {output_file.name}...", fg="cyan", err=True)
     
+    # We maintain a strictly ordered schema for readability
+    counts_cols = [
+        "kmers_sample_total_count",
+        "kmers_sample_classified_count",
+        "kmers_sample_unclassified_count",
+        "kmers_sample_clade_count",
+        "kmers_sample_exclade_count",
+        "kmers_sample_lineage_count",
+        "kmers_sample_root_count"
+    ]
+    ratio_cols = [
+        "kmers_sample_cladeVSclassified_ratio",
+        "kmers_sample_lineageVSclassified_ratio",
+        "kmers_sample_misclassifiedVSclassified_ratio",
+        "kmers_sample_rootVSclassified_ratio",
+        "kmers_sample_cladeVStotal_ratio",
+        "kmers_sample_classifiedVStotal_ratio",
+        "kmers_sample_lineageVStotal_ratio",
+        "kmers_sample_rootVStotal_ratio",
+        "kmers_sample_misclassifiedVStotal_ratio",
+        "kmers_sample_excladeVStotal_ratio",
+        "kmers_sample_supportingVStotal_ratio",
+        "kmers_sample_rootVSexclade_ratio",
+        "kmers_sample_lineageVSexclade_ratio"
+    ]
+    
     final_df = (
         counts_lf.collect()
         .join(dist_stats.collect(), on=["sample_id", "t_id"], how="left")
@@ -1042,8 +1155,23 @@ def produce_feature_kmer_sample_logic(
         .join(lca_stats.collect(), on=["sample_id", "t_id"], how="left")
         .join(lineage_stats.collect(), on=["sample_id", "t_id"], how="left")
         .join(top_hits, on=["sample_id", "t_id"], how="left")
-        .sort(["sample_id", "t_id"])
     )
+
+    # Get structural stat columns (ordered by calculate_weighted_stats)
+    struct_cols = []
+    for suffix in ["kmers_sample_misclassified_dist", "kmers_sample_misclassified_depth", "kmers_sample_misclassified_relative_lca_depth", "kmers_sample_lineage_relative_depth"]:
+        struct_cols.extend([f"{suffix}_{m}" for f in [suffix] for m in ["mean", "median", "stdev", "cv", "p05", "p95"]])
+
+    top_cols = [c for c in top_hits.columns if c not in ["sample_id", "t_id"]]
+
+    # Standardize column order
+    final_df = final_df.select([
+        "sample_id", "t_id",
+        *counts_cols,
+        *ratio_cols,
+        *struct_cols,
+        *top_cols
+    ]).sort(["sample_id", "t_id"])
 
     final_df.write_parquet(output_file, compression="zstd")
 
@@ -1132,33 +1260,44 @@ def produce_feature_kmer_stability_logic(
             pl.col(ratio).median().alias(f"{base_name}_median"),
             
             # Polars std() correctly ignores nulls and yields null if n<=1
-            pl.col(ratio).std().alias(f"_{base_name}_stdev"),
+            pl.col(ratio).std().alias(f"{base_name}_stdev"),
             
             pl.col(ratio).quantile(0.05).alias(f"{base_name}_p05"),
-            pl.col(ratio).quantile(0.95).alias(f"{base_name}_p95"),
-            
-            # Count valid (non-null) instances of this ratio
-            pl.col(ratio).drop_nulls().len().alias(f"_{base_name}_valid_n")
+            pl.col(ratio).quantile(0.95).alias(f"{base_name}_p95")
         ])
 
     agg_lf = lf.group_by("t_id").agg(base_agg)
 
-    # Calculate derived stats: CV and Presence
+    # Calculate derived stats: CV
+    # We add CV back as a first-class feature for all ratios
     final_exprs = []
     for ratio in TARGET_RATIOS:
         base_name = ratio.replace("kmers_sample_", "kmers_stability_")
-        final_exprs.extend([
+        final_exprs.append(
             pl.when(pl.col(f"{base_name}_mean") != 0)
-              .then(pl.col(f"_{base_name}_stdev") / pl.col(f"{base_name}_mean"))
+              .then(pl.col(f"{base_name}_stdev") / pl.col(f"{base_name}_mean"))
               .otherwise(None)
-              .alias(f"{base_name}_cv"),
-            
-            (pl.col(f"_{base_name}_valid_n") / pl.col("_taxon_sample_count")).alias(f"{base_name}_presence")
-        ])
+              .alias(f"{base_name}_cv")
+        )
 
     final_lf = agg_lf.with_columns(final_exprs).drop([
         c for c in agg_lf.collect_schema().names() if c.startswith("_") and c != "_taxon_sample_count"
     ]).drop("_taxon_sample_count")
+
+    # 7. Reorder columns to group by metric
+    ordered_cols = ["t_id", "kmers_stability_occupancy_ratio"]
+    for ratio in TARGET_RATIOS:
+        base_name = ratio.replace("kmers_sample_", "kmers_stability_")
+        ordered_cols.extend([
+            f"{base_name}_mean",
+            f"{base_name}_median",
+            f"{base_name}_stdev",
+            f"{base_name}_cv",
+            f"{base_name}_p05",
+            f"{base_name}_p95"
+        ])
+
+    final_lf = final_lf.select(ordered_cols)
 
     click.secho(f"Merging and writing output to {output_file.name}...", fg="cyan", err=True)
     df = final_lf.collect().sort("t_id")
@@ -1352,9 +1491,22 @@ def produce_feature_abundance_logic(
         (pl.col("abund_global_stdev") / pl.col("abund_global_mean")).alias("abund_global_cv")
     ).sort("t_id")
 
-    df = stats_lf.collect()
+    # 5. Reorder columns
+    ordered_cols = [
+        "t_id", 
+        "abund_global_mean", 
+        "abund_global_median", 
+        "abund_global_stdev", 
+        "abund_global_cv", 
+        "abund_global_p05", 
+        "abund_global_p95"
+    ]
+    if inspect_file:
+        ordered_cols.extend(["abund_global_meanVSmm_ratio", "abund_global_medianVSmm_ratio"])
+    
+    df = stats_lf.select(ordered_cols).collect()
 
-    # 5. Save
+    # 6. Save
     click.secho(f"Saving abundance features to {output_file.name}...", fg="cyan", err=True)
     ext_out = output_file.suffix.lower()
     if ext_out == ".parquet":
