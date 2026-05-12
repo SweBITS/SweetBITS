@@ -23,6 +23,7 @@ SweetBITS organizes its tools into a logical workflow centered around bringing d
 ```text
 sweetbits
 ├── collect
+│   ├── feature-chunks         <- Concatenates intermediate feature chunks
 │   └── kraken
 │       ├── reports            <- Gathers multiple kraken .report files
 │       ├── classifications    <- Ingests kraken read-by-read output + FASTQ
@@ -32,6 +33,7 @@ sweetbits
 │   ├── reads                  <- Extracts reads back to FASTQ
 │   ├── table                  <- Generates abundance matrices
 │   └── feature
+│       ├── abundance           <- Calculates global abundance stats (Mean, CV)
 │       ├── uniq-minimizer-corr <- Calculates validation metrics
 │       ├── kmer-global         <- Calculates pooled k-mer quality features
 │       ├── kmer-sample         <- Calculates per-sample k-mer quality features
@@ -59,6 +61,11 @@ SweetBITS provides several high-performance tools for processing Kraken 2 output
 - `collect kraken kmers`: Aggregates k-mer hit counts and read length distributions for species-level clades from raw Kraken read-by-read files.
     - *Purpose:* Transforms slow-to-parse text files into compact, sorted Parquet files optimized for machine learning feature extraction.
     - *Species Roll-up:* Automatically maps every read (including strains/subspecies) to its parent species-level clade using vectorized JolTax lookups.
+- `collect feature-chunks`: Concatenates multiple intermediate feature Parquet files (chunks) into a single unified dataset.
+    - *Scalability:* Enables a "Divide and Conquer" workflow where massive projects are processed in parallel (e.g., via Snakemake) and unified at high speed using Polars lazy concatenation.
+- `produce feature abundance`: Calculates global abundance features (mean, median, CV, p05, p95) from wide-format tables.
+    - *Purpose:* Provides a global statistical profile of taxonomic abundance across all samples, useful for identifying highly variable or consistent organisms.
+    - *Compatibility:* Works with any wide-format table (e.g., CLR-transformed or proportions) that contains a `t_id` column.
 - `produce feature kmer-global`: Calculates globally aggregated k-mer classification quality features by pooling data across any number of samples.
     - *Metrics:* Focuses on high-signal metrics like weighted mean taxonomic distance, LCA depth, and competitor identification.
     - *Global Totals:* Provides a "Global Total" evidence profile for every species in the dataset, allowing for robust GBM-based true/false positive detection.
@@ -70,6 +77,8 @@ SweetBITS provides several high-performance tools for processing Kraken 2 output
     - *Validation Strategy:* Correlates observed unique minimizer coverage against a probabilistic expectation model. Taxa that fail to correlate across samples (e.g., Pearson R < 0.7) are likely false positives.
     - *Safety Limits:* Automatically applies a floor of $n \ge 6$ samples to ensure statistical stability.
     - *Usage:* Generates a `FEATURE_TABLE` indexed by `t_id` that can be joined to any abundance table via `sweetbits annotate --metadata`.
+- `produce feature read-lengths-global`: Calculates globally aggregated read length features (mean, median, CV, p05, p95) by pooling data across all samples.
+- `produce feature read-lengths-sample`: Calculates per-sample read length features for every taxon detected in each sample.
 - `annotate`: Transforms numeric abundance matrices into human-readable files. Automatically injects full taxonomic lineages from JolTax, optionally calculates summary statistics (sig_avg, sig_med), and supports two sorting modes:
     - `alphabetical`: Hierarchical rank-based sort (Domain -> Phylum -> ...).
     - `dfs`: Depth-First Search traversal (related organisms cluster together, branches can be weighted by sig_avg).
