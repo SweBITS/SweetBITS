@@ -843,6 +843,8 @@ def produce_feature_read_lengths_sample_logic(
         "records_processed": df.height,
         "output_file": str(output_file)
     }
+
+
 def produce_feature_kmer_sample_logic(
     input_pattern: str,
     taxonomy_dir: Path,
@@ -1258,22 +1260,24 @@ def collect_feature_chunks_logic(
 def produce_feature_abundance_logic(
     input_table: Path,
     output_file: Path,
+    inspect_file: Optional[Path] = None,
     cores: Optional[int] = None,
     overwrite: bool = False
 ) -> Dict[str, Any]:
     """
-    Calculates global abundance features (mean, median, p05, p95, CV) for every taxon.
+    Calculates global abundance features (mean, median, stdev, p05, p95, CV) for every taxon.
 
     This engine consumes a wide-format abundance table (e.g., CLR-transformed or 
     proportions) and calculates row-wise statistical summaries across all samples.
-    It supports multiple input formats (CSV, TSV, Parquet) and automatically 
-    identifies sample columns by excluding the 't_id' index.
+    If a Kraken inspect file is provided, it also calculates minimizer-normalized 
+    abundance features (abundance / clade_minimizers).
 
     Args:
-        input_table : Path to the wide-format abundance table.
-        output_file : Path to save the resulting feature table (.csv, .tsv, .parquet).
-        cores       : Number of threads to dedicate to Polars.
-        overwrite   : Whether to overwrite an existing output file.
+        input_table  : Path to the wide-format abundance table.
+        output_file  : Path to save the resulting feature table (.csv, .tsv, .parquet).
+        inspect_file : (Optional) Path to Kraken inspect CSV file.
+        cores        : Number of threads to dedicate to Polars.
+        overwrite    : Whether to overwrite an existing output file.
 
     Returns:
         A dictionary containing processing statistics.
@@ -1304,25 +1308,53 @@ def produce_feature_abundance_logic(
     if not sample_cols:
         raise ValueError("The input table must contain at least one sample column in addition to 't_id'.")
 
+    # 3. Handle Minimizers (Optional)
+    if inspect_file:
+        click.secho(f"Integrating minimizer normalization from '{inspect_file.name}'...", fg="cyan", err=True)
+        inspect_lf = pl.scan_csv(inspect_file).select([
+            pl.col("tax_id").alias("t_id"),
+            pl.col("clade_minimizers").cast(pl.Float64)
+        ])
+        # Join inspect data to the main table
+        lf = lf.join(inspect_lf, on="t_id", how="left")
+
     click.secho(f"Calculating abundance statistics across {len(sample_cols)} samples...", fg="cyan", err=True)
 
-    # 3. Calculate statistics
-    # We unpivot to long format to use standard group_by aggregations which are more robust in Polars
-    # than row-wise expressions for quantiles.
-    long_lf = lf.unpivot(index="t_id", variable_name="sample_id", value_name="abundance")
+    # 4. Calculate statistics
+    unpivot_cols = ["t_id"]
+    if inspect_file:
+        unpivot_cols.append("clade_minimizers")
 
-    # We use 'nearest' for quantiles to match numpy's default behavior used in the golden truth generator
-    stats_lf = long_lf.group_by("t_id").agg([
-        pl.col("abundance").mean().alias("abundance_global_mean"),
-        pl.col("abundance").median().alias("abundance_global_median"),
-        pl.col("abundance").quantile(0.05, interpolation="nearest").alias("abundance_global_p05"),
-        pl.col("abundance").quantile(0.95, interpolation="nearest").alias("abundance_global_p95"),
-        (pl.col("abundance").std() / pl.col("abundance").mean()).alias("abundance_global_cv")
-    ]).sort("t_id")
+    long_lf = lf.unpivot(index=unpivot_cols, variable_name="sample_id", value_name="abundance")
+
+    # Base expressions
+    agg_exprs = [
+        pl.col("abundance").mean().alias("abund_global_mean"),
+        pl.col("abundance").median().alias("abund_global_median"),
+        pl.col("abundance").std().alias("abund_global_stdev"),
+        pl.col("abundance").quantile(0.05, interpolation="nearest").alias("abund_global_p05"),
+        pl.col("abundance").quantile(0.95, interpolation="nearest").alias("abund_global_p95"),
+    ]
+
+    # Add minimizer-normalized expressions if available
+    if inspect_file:
+        # Avoid division by zero/null for minimizers
+        normalized_expr = pl.col("abundance") / pl.col("clade_minimizers")
+        agg_exprs.extend([
+            normalized_expr.mean().alias("abund_global_meanVSmm_ratio"),
+            normalized_expr.median().alias("abund_global_medianVSmm_ratio")
+        ])
+
+    stats_lf = long_lf.group_by("t_id").agg(agg_exprs)
+
+    # Calculate CV (must be done after mean/stdev are calculated)
+    stats_lf = stats_lf.with_columns(
+        (pl.col("abund_global_stdev") / pl.col("abund_global_mean")).alias("abund_global_cv")
+    ).sort("t_id")
 
     df = stats_lf.collect()
 
-    # 4. Save
+    # 5. Save
     click.secho(f"Saving abundance features to {output_file.name}...", fg="cyan", err=True)
     ext_out = output_file.suffix.lower()
     if ext_out == ".parquet":
@@ -1332,7 +1364,7 @@ def produce_feature_abundance_logic(
     else:
         df.write_csv(output_file, quote_style="non_numeric")
 
-    # 5. Metadata
+    # 6. Metadata
     out_meta = get_standard_metadata(
         file_type="FEATURE_TABLE",
         source_path=input_table,

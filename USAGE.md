@@ -169,10 +169,17 @@ sweetbits produce feature kmer-stability kmers_sample_features.parquet \
 ```
 
 ### Abundance Features
-If you have a wide-format abundance table (e.g., from CLR transformation) and want to calculate global distribution features:
+Calculates global abundance features (mean, median, stdev, p05, p95, CV) from wide-format tables. All output columns use the `abund_global_` prefix.
+
 ```bash
+# Basic usage on a CLR-transformed table
 sweetbits produce feature abundance clr_table.parquet \
     --output abundance_features.csv
+
+# With minimizer normalization (calculates Mean/Median VS Minimizer ratios)
+sweetbits produce feature abundance clr_table.parquet \
+    --inspect /path/to/kraken_inspect.csv \
+    --output abundance_features_norm.parquet
 ```
 
 ### Scalable "Divide and Conquer" Workflow

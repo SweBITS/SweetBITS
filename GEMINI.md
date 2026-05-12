@@ -267,11 +267,12 @@ Calculates per-sample read length features for every taxon detected in each samp
   - `--overwrite`: Overwrite output file if it exists.
 
 #### `produce feature abundance`
-Calculates global abundance features (mean, median, CV, p05, p95) from a wide-format table.
+Calculates global abundance features (mean, median, stdev, p05, p95, CV) from a wide-format table.
 - **Inputs:** Wide-format abundance table (Parquet, CSV, TSV).
 - **Arguments:**
   - `INPUT_TABLE`: Path to the abundance table (e.g., CLR-transformed).
   - `--output FILE`: Path to output summary file.
+  - `--inspect FILE`: (Optional) Kraken inspect CSV file for minimizer normalization.
   - `--cores INT`: Number of CPU cores to use.
   - `--overwrite`: Overwrite output file if it exists.
 

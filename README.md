@@ -63,8 +63,10 @@ SweetBITS provides several high-performance tools for processing Kraken 2 output
     - *Species Roll-up:* Automatically maps every read (including strains/subspecies) to its parent species-level clade using vectorized JolTax lookups.
 - `collect feature-chunks`: Concatenates multiple intermediate feature Parquet files (chunks) into a single unified dataset.
     - *Scalability:* Enables a "Divide and Conquer" workflow where massive projects are processed in parallel (e.g., via Snakemake) and unified at high speed using Polars lazy concatenation.
-- `produce feature abundance`: Calculates global abundance features (mean, median, CV, p05, p95) from wide-format tables.
+- `produce feature abundance`: Calculates global abundance features (mean, median, stdev, p05, p95, CV) from wide-format tables.
     - *Purpose:* Provides a global statistical profile of taxonomic abundance across all samples, useful for identifying highly variable or consistent organisms.
+    - *Abbreviation:* All output columns use the `abund_global_` prefix.
+    - *Minimizer Normalization:* Optionally normalize abundance by the number of minimizers in the database using the `--inspect` flag to calculate "Coverage Density" ratios (`abund_global_{mean,median}VSmm_ratio`).
     - *Compatibility:* Works with any wide-format table (e.g., CLR-transformed or proportions) that contains a `t_id` column.
 - `produce feature kmer-global`: Calculates globally aggregated k-mer classification quality features by pooling data across any number of samples.
     - *Metrics:* Focuses on high-signal metrics like weighted mean taxonomic distance, LCA depth, and competitor identification.

@@ -342,15 +342,17 @@ def produce_feature_read_lengths_sample(input_pattern, output, cores, overwrite)
         sys.exit(1)
 
 
-@feature.command(name="abundance", short_help="Calculate global abundance features (Mean, Median, CV) from a table.")
+@feature.command(name="abundance", short_help="Calculate global abundance features (Mean, Median, CV, StDev) from a table.")
 @click.argument("input_table", type=click.Path(exists=True, path_type=Path))
 @click.option("--output", "-o", required=True, type=click.Path(path_type=Path), help="Path to output summary file.")
+@click.option("--inspect", type=click.Path(exists=True, path_type=Path), help="Kraken inspect CSV file for minimizer normalization.")
 @click.option("--cores", type=int, help="Number of CPU cores to use (Default: all available).")
 @click.option("--overwrite", is_flag=True, help="Overwrite output file if it exists.")
-def produce_feature_abundance(input_table, output, cores, overwrite):
+def produce_feature_abundance(input_table, output, inspect, cores, overwrite):
     """
-    Calculates global abundance features (mean, median, p05, p95, CV) for every taxon.
-    Consumes a wide-format abundance table (e.g., CLR-transformed).
+    Calculates global abundance features (mean, median, stdev, p05, p95, CV) for every taxon.
+    Consumes a wide-format abundance table (e.g., CLR-transformed or proportions).
+    If --inspect is provided, it also calculates minimizer-normalized abundance ratios.
     """
     start_time = time.time()
     ctx = click.get_current_context()
@@ -363,6 +365,7 @@ def produce_feature_abundance(input_table, output, cores, overwrite):
         summary = produce_feature_abundance_logic(
             input_table=input_table,
             output_file=output,
+            inspect_file=inspect,
             cores=cores,
             overwrite=overwrite
         )
