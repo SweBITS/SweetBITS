@@ -1250,3 +1250,73 @@ def produce_feature_kmer_stability_logic(
         "taxa_processed": df.height,
         "output_file": str(output_file)
     }
+
+def collect_feature_chunks_logic(
+    input_pattern: str,
+    output_file: Path,
+    cores: Optional[int] = None,
+    overwrite: bool = False
+) -> Dict[str, Any]:
+    """
+    Concatenates multiple intermediate feature chunks (Parquet) into a single file.
+
+    This tool is designed for "Divide and Conquer" workflows where individual 
+    samples are processed separately to stay within memory limits. It performs 
+    a lazy concatenation and ensures that the final file is correctly sorted 
+    and assigned valid provenance metadata.
+
+    Args:
+        input_pattern : Glob pattern for the intermediate .parquet chunks.
+        output_file   : Path to save the final concatenated Parquet file.
+        cores         : Number of threads to dedicate to Polars.
+        overwrite     : Whether to overwrite an existing output file.
+
+    Returns:
+        A dictionary containing processing statistics.
+    """
+    if output_file.exists() and not overwrite:
+        raise FileExistsError(f"Output file '{output_file}' already exists. Use --overwrite to replace.")
+
+    check_write_permission(output_file)
+
+    if cores:
+        os.environ["POLARS_MAX_THREADS"] = str(cores)
+
+    # 1. Identify input files
+    input_files = sorted(list(Path(input_pattern).parent.glob(Path(input_pattern).name)))
+    if not input_files:
+        raise FileNotFoundError(f"No files found matching pattern: '{input_pattern}'")
+
+    click.secho(f"Concatenating {len(input_files)} feature chunks into {output_file.name}...", fg="cyan", err=True)
+
+    # 2. Verify Schemas & Metadata
+    # We check the first file to establish the 'master' metadata profile
+    master_meta = read_companion_metadata(input_files[0]) or {}
+    
+    # Lazy scan all files
+    lfs = [pl.scan_parquet(f) for f in input_files]
+    
+    # 3. Concatenate and Sort
+    # Polars concatenation is extremely efficient (often O(1) metadata join)
+    concatenated_lf = pl.concat(lfs, how="vertical")
+    
+    # We enforce consistent sorting for the final long-format dataset
+    final_df = concatenated_lf.sort(["sample_id", "t_id"]).collect()
+
+    # 4. Save and Metadata
+    final_df.write_parquet(output_file, compression="zstd")
+
+    meta = get_standard_metadata(
+        file_type=master_meta.get("file_type", "FEATURE_TABLE"),
+        source_path=Path(input_pattern).parent,
+        compression="zstd",
+        sorting="sample_id, t_id",
+        data_standard=master_meta.get("data_standard", "MIXED")
+    )
+    save_companion_metadata(output_file, meta)
+
+    return {
+        "chunks_merged": len(input_files),
+        "total_records": final_df.height,
+        "output_file": str(output_file)
+    }

@@ -227,7 +227,20 @@ def main():
     for r in all_reads:
         if r["status"] == "U": continue
         s_id = r["sample_id"]
-        tid = r["t_id"]
+        raw_tid = r["t_id"]
+        
+        lineage = tree.get_lineage(raw_tid)
+        species_idx = tree.rank_names.index('species') if 'species' in tree.rank_names else -1
+        tid = None
+        for anc in lineage:
+            idx = tree._get_indices(np.array([anc], dtype=np.uint32))[0]
+            if idx != -1 and tree.ranks[idx] == species_idx:
+                tid = anc
+                break
+                
+        if tid is None:
+            continue
+            
         hit_tid, hit_count = r["kmer_str"].split(":")
         hit_tid, hit_count = int(hit_tid), int(hit_count)
         

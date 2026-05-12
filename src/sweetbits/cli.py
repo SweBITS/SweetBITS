@@ -101,6 +101,36 @@ def collect():
     """Commands to parse and ingest output files from taxonomic classifiers."""
     pass
 
+@collect.command(name="feature-chunks", short_help="Concatenate intermediate feature chunks.")
+@click.argument("input_pattern")
+@click.option("--output", "-o", type=click.Path(path_type=Path), required=True, help="Path to final concatenated Parquet file.")
+@click.option("--cores", type=int, help="Number of CPU cores to use (Default: all available).")
+@click.option("--overwrite", is_flag=True, help="Overwrite output file if it exists.")
+def collect_feature_chunks(input_pattern, output, cores, overwrite):
+    """
+    Merges multiple long-format feature Parquet files (chunks) into a single file.
+    Ensures consistent sorting and generates consolidated metadata.
+    """
+    from sweetbits.features import collect_feature_chunks_logic
+    start_time = time.time()
+    ctx = click.get_current_context()
+    print_splash()
+    print_invocation_info()
+    print_parameters(ctx.params)
+    
+    try:
+        summary = collect_feature_chunks_logic(
+            input_pattern=input_pattern,
+            output_file=output,
+            cores=cores,
+            overwrite=overwrite
+        )
+        summary["status"] = "Success"
+        print_footer(start_time, summary)
+    except Exception as e:
+        click.secho(f"Error: {str(e)}", fg="red", err=True)
+        sys.exit(1)
+
 @collect.group(short_help="Ingest Kraken 2 output files.")
 def kraken():
     """Commands specifically for parsing Kraken 2 reports and read classifications."""

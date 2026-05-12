@@ -40,6 +40,8 @@ def test_produce_feature_kmer_sample_parity(kmer_sample_data, tmp_path):
     df_gen = pl.read_parquet(output_file)
     df_gold = pl.read_csv(golden_file, null_values=[""])
     
+    assert df_gen.height == df_gold.height, "Row counts differ between generated and golden sample features."
+    
     # Drop string lists (names/ids/shares) to just compare numerical correctness
     drop_cols = [c for c in df_gen.columns if "_shares" in c or "_names" in c or "_taxids" in c]
     df_gen_num = df_gen.drop(drop_cols).sort(["sample_id", "t_id"])
@@ -52,11 +54,11 @@ def test_produce_feature_kmer_sample_parity(kmer_sample_data, tmp_path):
     common_cols = sorted(list(set(df_gen_num.columns) & set(df_gold_filtered.columns)))
     
     assert_frame_equal(
-        df_gen_num.select(common_cols), 
-        df_gold_filtered.select(common_cols), 
-        check_dtypes=False, 
-        rel_tol=1e-2, 
-        check_exact=False, 
+        df_gen_num.select(common_cols),
+        df_gold_filtered.select(common_cols),
+        check_dtypes=False,
+        rel_tol=1e-2,
+        check_exact=False,
         check_column_order=False
     )
 
@@ -80,6 +82,8 @@ def test_produce_feature_kmer_stability_parity(kmer_sample_data, tmp_path):
     
     df_gen = pl.read_csv(stability_file, null_values=[""])
     df_gold = pl.read_csv(golden_file, null_values=[""])
+    
+    assert df_gen.height == df_gold.height, "Row counts differ between generated and golden stability features."
     
     df_gen_num = df_gen.sort("t_id")
     df_gold_filtered = df_gold.join(df_gen_num.select(["t_id"]), on="t_id", how="inner").sort("t_id")
