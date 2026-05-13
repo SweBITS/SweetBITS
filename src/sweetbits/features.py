@@ -1450,7 +1450,16 @@ def produce_feature_abundance_logic(
     # 3. Handle Minimizers (Optional)
     if inspect_file:
         click.secho(f"Integrating minimizer normalization from '{inspect_file.name}'...", fg="cyan", err=True)
-        inspect_lf = pl.scan_csv(inspect_file).select([
+        try:
+            # Kraken inspect files are often semicolon-separated, but can be comma-separated
+            inspect_lf = pl.scan_csv(inspect_file, separator=";", schema_overrides={"tax_id": pl.UInt32})
+            inspect_schema = inspect_lf.collect_schema()
+            if "clade_minimizers" not in inspect_schema:
+                inspect_lf = pl.scan_csv(inspect_file, separator=",", schema_overrides={"tax_id": pl.UInt32})
+        except Exception as e:
+            raise ValueError(f"Failed to parse Kraken inspect file: {str(e)}")
+
+        inspect_lf = inspect_lf.select([
             pl.col("tax_id").alias("t_id"),
             pl.col("clade_minimizers").cast(pl.Float64)
         ])
