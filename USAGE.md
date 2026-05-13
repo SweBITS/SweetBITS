@@ -285,4 +285,3 @@ These numbers should be treated as **guidelines** rather than absolute limits. R
 
 **Recommendation:** For stable execution, allocate at least **6 GB of RAM per 1 GB of compressed input**.
 ```
-

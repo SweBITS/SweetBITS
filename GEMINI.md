@@ -369,7 +369,13 @@ Instead of embedding metadata in the Parquet header, SweetBITS uses a Strict Mod
 8. [x] Implement `collect kraken classifications` (Ingestion from raw Kraken/FASTQ).
 9. [x] Implement `collect kraken kmers` (Aggregation for ML features).
 10. [x] Implement `produce feature kmer-global` (Global k-mer features).
-11. [x] Implement `produce feature uniq-minimizer-corr` (Minimizer correlations).
-12. [ ] Implement peak memory reporting for Windows (currently Unix-only).
-13. [ ] Future: `coda` command suite for Compositional Data Analysis.
-14. [x] **Bugfix:** Update `calculate_canonical_remainders` in `canonical.py` to not hardcode `global_root_idx = 0` and safeguard `parent_indices = tree.parents[active_canonical_subset]` against `-1` to prevent silent indexing bugs if the tree root changes.
+11. [x] Implement `produce feature kmer-sample` (Per-sample k-mer features).
+12. [x] Implement `produce feature kmer-stability` (Inter-sample variance features).
+13. [x] Implement `produce feature read-lengths-global` (Global read length stats).
+14. [x] Implement `produce feature read-lengths-sample` (Per-sample read length stats).
+15. [x] Implement `produce feature abundance` (Global abundance stats).
+16. [x] Implement `collect feature-chunks` (Scalable divide-and-conquer merging).
+17. [x] Implement `produce feature uniq-minimizer-corr` (Minimizer correlations).
+18. [ ] Implement peak memory reporting for Windows (currently Unix-only).
+19. [ ] Future: `coda` command suite for Compositional Data Analysis.
+20. [x] **Bugfix:** Update `calculate_canonical_remainders` in `canonical.py` to not hardcode `global_root_idx = 0` and safeguard `parent_indices = tree.parents[active_canonical_subset]` against `-1` to prevent silent indexing bugs if the tree root changes.
